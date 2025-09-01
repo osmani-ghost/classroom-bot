@@ -1,4 +1,4 @@
-const axios = require('axios');
+import axios from 'axios'; // শুধু এই লাইনটি পরিবর্তন করা হয়েছে
 
 // আমাদের আগের listCourses ফাংশনটি এখন handler ফাংশনের ভেতরে থাকবে
 export default async function handler(request, response) {
