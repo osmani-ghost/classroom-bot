@@ -1,14 +1,13 @@
-// axios লাইব্রেরিটি ইমপোর্ট করা হচ্ছে, যা আমাদের API কলের কাজে লাগবে
 const axios = require('axios');
-// fs (File System) লাইব্রেরিটি ইমপোর্ট করা হচ্ছে, যা ফাইল পড়তে সাহায্য করবে
-const fs = require('fs').promises;
+// fs লাইব্রেরিটি আর প্রয়োজন নেই, তাই এটি মুছে ফেলা হয়েছে
 
 // এই async ফাংশনটিই আমাদের মূল কাজ করবে
 async function listCourses() {
   try {
-    // ১. credentials.json ফাইল থেকে আমাদের গোপন কী-গুলো পড়া হচ্ছে
-    const credentials = JSON.parse(await fs.readFile('credentials.json'));
-    const { client_secret, client_id, refresh_token } = credentials.web;
+    // ১. Vercel-এর 'সিক্রেট ভল্ট' (Environment Variables) থেকে আমাদের গোপন কী-গুলো পড়া হচ্ছে
+    const client_id = process.env.GOOGLE_CLIENT_ID;
+    const client_secret = process.env.GOOGLE_CLIENT_SECRET;
+    const refresh_token = process.env.GOOGLE_REFRESH_TOKEN;
 
     // ২. Refresh Token ব্যবহার করে একটি নতুন Access Token আনার জন্য গুগলকে রিকোয়েস্ট পাঠানো হচ্ছে
     const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
@@ -24,11 +23,10 @@ async function listCourses() {
     // ৩. নতুন পাওয়া Access Token ব্যবহার করে গুগল ক্লাসরুম API থেকে কোর্স লিস্ট চাওয়া হচ্ছে
     const classroomResponse = await axios.get('https://classroom.googleapis.com/v1/courses', {
       headers: {
-        Authorization: `Bearer ${accessToken}`, // Access Token-টি এখানে ব্যবহার করা হচ্ছে
+        Authorization: `Bearer ${accessToken}`,
       },
-      // **** এই নতুন অংশটি যোগ করা হয়েছে ****
       params: {
-        studentId: 'me', // আমরা বলে দিচ্ছি যে আমি ছাত্র হিসেবে থাকা কোর্সগুলো চাই
+        studentId: 'me',
       },
     });
 
@@ -45,7 +43,6 @@ async function listCourses() {
     }
 
   } catch (error) {
-    // যদি কোনো ভুল হয়, তাহলে সেটি এখানে দেখানো হবে
     console.error('Error fetching data:', error.response ? error.response.data : error.message);
   }
 }
