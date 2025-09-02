@@ -1,12 +1,30 @@
-import axios from 'axios'; // শুধু এই লাইনটি পরিবর্তন করা হয়েছে
+import axios from 'axios';
 
-// আমাদের আগের listCourses ফাংশনটি এখন handler ফাংশনের ভেতরে থাকবে
 export default async function handler(request, response) {
+  // --- ফেসবুক ওয়েবুক ভেরিফিকেশন অংশ ---
+  if (request.method === 'GET') {
+    const verifyToken = process.env.MESSENGER_VERIFY_TOKEN;
+
+    const mode = request.query['hub.mode'];
+    const token = request.query['hub.verify_token'];
+    const challenge = request.query['hub.challenge'];
+
+    if (mode && token) {
+      if (mode === 'subscribe' && token === verifyToken) {
+        console.log('WEBHOOK_VERIFIED');
+        response.status(200).send(challenge);
+      } else {
+        response.status(403).send('Forbidden');
+      }
+    }
+    return; // GET রিকোয়েস্টের কাজ এখানেই শেষ
+  }
+  
+  // --- আমাদের আগের গুগল ক্লাসরুম চেক করার কোড ---
+  // (আপাতত, এটি আর চলবে না কারণ আমরা এটিকে শুধু GET রিকোয়েস্টের বাইরে রেখেছি)
   try {
-    // ১. Vercel-এর Environment Variables থেকে গোপন কী-গুলো পড়া হচ্ছে
     const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN } = process.env;
 
-    // ২. Refresh Token ব্যবহার করে একটি নতুন Access Token আনা হচ্ছে
     const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', {
       client_id: GOOGLE_CLIENT_ID,
       client_secret: GOOGLE_CLIENT_SECRET,
@@ -15,9 +33,8 @@ export default async function handler(request, response) {
     });
     
     const accessToken = tokenResponse.data.access_token;
-    console.log('Successfully received new Access Token via Cron Job!');
+    console.log('Successfully received new Access Token!');
 
-    // ৩. নতুন Access Token দিয়ে কোর্স লিস্ট চাওয়া হচ্ছে
     const classroomResponse = await axios.get('https://classroom.googleapis.com/v1/courses', {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -29,7 +46,6 @@ export default async function handler(request, response) {
 
     const courses = classroomResponse.data.courses;
     
-    // ৪. কোর্স লিস্ট টার্মিনালে (Vercel Logs) দেখানো হচ্ছে
     if (courses && courses.length) {
       console.log('Courses found:');
       courses.forEach((course) => {
@@ -39,12 +55,10 @@ export default async function handler(request, response) {
       console.log('No courses found.');
     }
     
-    // Vercel-কে জানানো হচ্ছে যে কাজটি সফল হয়েছে
-    response.status(200).send('Function executed successfully.');
+    response.status(200).send('Old function executed successfully.');
 
   } catch (error) {
-    // যদি কোনো ভুল হয়, সেটি Vercel Logs-এ দেখানো হবে
     console.error('Error fetching data:', error.response ? error.response.data : error.message);
-    response.status(500).send('Error executing function.');
+    response.status(500).send('Error executing old function.');
   }
 }
