@@ -1,1 +1,1 @@
-My first full-stack project.
+Automated bot for Google Classroom.
