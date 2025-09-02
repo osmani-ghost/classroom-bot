@@ -6,8 +6,8 @@ export default async function handler(req, res) {
   if (req.method === "GET") {
     const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
 
-    console.log("👉 FB sent token:", req.query["hub.verify_token"]);
-    console.log("👉 Our VERIFY_TOKEN from env:", VERIFY_TOKEN);
+    console.log("FB sent token:", req.query["hub.verify_token"]);
+    console.log("Our VERIFY_TOKEN from env:", VERIFY_TOKEN);
 
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
