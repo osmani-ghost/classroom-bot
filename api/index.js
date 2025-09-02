@@ -1,5 +1,4 @@
 // api/index.js
-import getRawBody from "raw-body";
 
 // Messenger webhook handler
 export default async function handler(req, res) {
@@ -7,8 +6,8 @@ export default async function handler(req, res) {
   if (req.method === "GET") {
     const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
 
-    console.log("👉 FB sent token:", req.query["hub.verify_token"]);
-    console.log("👉 Our VERIFY_TOKEN from env:", VERIFY_TOKEN);
+    console.log("FB sent token:", req.query["hub.verify_token"]);
+    console.log("Our VERIFY_TOKEN from env:", VERIFY_TOKEN);
 
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
@@ -26,9 +25,7 @@ export default async function handler(req, res) {
   // 🔹 Step 2: Handle messages (POST request from Facebook)
   if (req.method === "POST") {
     try {
-      // Messenger requires raw body
-      const raw = await getRawBody(req);
-      const body = JSON.parse(raw.toString("utf-8"));
+      const body = req.body; // Next.js default JSON parsing
 
       console.log("📩 Messenger event received:");
       console.log(JSON.stringify(body, null, 2));
@@ -84,9 +81,9 @@ async function sendMessage(senderId, text) {
   }
 }
 
-// 🔹 Disable bodyParser for raw request body (Messenger requirement)
+// 🔹 Default bodyParser enabled (Next.js handles JSON automatically)
 export const config = {
   api: {
-    bodyParser: false,
+    bodyParser: true, // Default, so no raw-body needed
   },
 };
