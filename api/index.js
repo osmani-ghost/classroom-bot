@@ -1,10 +1,42 @@
+// api/index.js
+
+// 🔹 Helper function: Send message back to Messenger
+async function sendMessage(senderId, text) {
+  const PAGE_ACCESS_TOKEN = process.env.MESSENGER_PAGE_ACCESS_TOKEN; // match your Vercel env
+
+  if (!PAGE_ACCESS_TOKEN) {
+    console.error("❌ PAGE_ACCESS_TOKEN is missing in env variables");
+    return;
+  }
+
+  const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
+
+  const body = {
+    recipient: { id: senderId },
+    message: { text: text },
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const result = await response.json();
+    console.log("✅ Message sent:", result);
+  } catch (error) {
+    console.error("❌ Failed to send message:", error);
+  }
+}
+
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
 
   // 🔹 Step 0: Cron job check
   if (req.query.cron === "true") {
     console.log("⏰ Cron job triggered");
-    // এখানে cron job logic/run করা হবে
+    // Cron job logic run করতে পারেন এখানে
     return res.status(200).send("Cron job executed");
   }
 
@@ -35,6 +67,7 @@ export default async function handler(req, res) {
 
       body.entry.forEach(async (entry) => {
         if (!entry.messaging) return;
+
         entry.messaging.forEach(async (event) => {
           const senderId = event.sender?.id;
           if (!senderId) return;
@@ -61,3 +94,10 @@ export default async function handler(req, res) {
 
   return res.status(400).send("Invalid request method.");
 }
+
+// 🔹 Default bodyParser enabled (Next.js handles JSON automatically)
+export const config = {
+  api: {
+    bodyParser: true,
+  },
+};
