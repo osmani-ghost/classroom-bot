@@ -1,52 +1,86 @@
-export default async function handler(req, res) {
-  try {
-    // Google OAuth credentials (Environment Variables থেকে নিবে)
-    const {
-      GOOGLE_CLIENT_ID,
-      GOOGLE_CLIENT_SECRET,
-      GOOGLE_REFRESH_TOKEN,
-    } = process.env;
+// api/index.js
 
-    // 1. Access Token নেয়া
-    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+// Messenger webhook handler
+export default async function handler(req, res) {
+  // 🔹 Step 1: Verify webhook (GET request from Facebook)
+  if (req.method === "GET") {
+    const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
+
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
+    const challenge = req.query["hub.challenge"];
+
+    if (mode === "subscribe" && token === VERIFY_TOKEN) {
+      console.log("✅ WEBHOOK_VERIFIED");
+      return res.status(200).send(challenge);
+    } else {
+      console.error("❌ Webhook verification failed");
+      return res.status(403).send("Forbidden");
+    }
+  }
+
+  // 🔹 Step 2: Handle messages (POST request from Facebook)
+  if (req.method === "POST") {
+    try {
+      const body = req.body;
+
+      console.log("📩 Messenger event received:");
+      console.log(JSON.stringify(body, null, 2));
+
+      if (body.object === "page") {
+        body.entry.forEach(async (entry) => {
+          const event = entry.messaging[0];
+          const senderId = event.sender.id;
+
+          if (event.message && event.message.text) {
+            const userMessage = event.message.text;
+            console.log(`👤 User (${senderId}) said: ${userMessage}`);
+
+            // Simple reply
+            await sendMessage(senderId, `You said: ${userMessage}`);
+          }
+        });
+      }
+
+      return res.status(200).send("EVENT_RECEIVED");
+    } catch (err) {
+      console.error("❌ Error handling message:", err);
+      return res.status(500).send("Error");
+    }
+  }
+
+  // Invalid method
+  return res.status(400).send("Invalid request method.");
+}
+
+// 🔹 Helper function: Send message back to Messenger
+async function sendMessage(senderId, text) {
+  const PAGE_ACCESS_TOKEN = process.env.MESSENGER_PAGE_TOKEN;
+
+  const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
+
+  const body = {
+    recipient: { id: senderId },
+    message: { text: text },
+  };
+
+  try {
+    const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_id: GOOGLE_CLIENT_ID,
-        client_secret: GOOGLE_CLIENT_SECRET,
-        refresh_token: GOOGLE_REFRESH_TOKEN,
-        grant_type: "refresh_token",
-      }),
+      body: JSON.stringify(body),
     });
 
-    if (!tokenResponse.ok) {
-      throw new Error("Failed to fetch access token");
-    }
-
-    const tokenData = await tokenResponse.json();
-    const accessToken = tokenData.access_token;
-
-    // 2. Google Classroom API থেকে course list আনা
-    const classroomResponse = await fetch(
-      "https://classroom.googleapis.com/v1/courses",
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }
-    );
-
-    if (!classroomResponse.ok) {
-      throw new Error("Failed to fetch courses from Google Classroom");
-    }
-
-    const courses = await classroomResponse.json();
-
-    // Response পাঠানো
-    res.status(200).json(courses);
+    const result = await response.json();
+    console.log("✅ Message sent:", result);
   } catch (error) {
-    console.error("Error in API:", error.message);
-    res.status(500).json({ error: error.message });
+    console.error("❌ Failed to send message:", error);
   }
 }
+
+// 🔹 Disable bodyParser for raw request body (Messenger requirement)
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
