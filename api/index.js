@@ -3,17 +3,15 @@ import { sendMessage } from "../messengerHelper.js";
 import { checkReminders } from "../cronJob.js";
 
 const TEACHER_ID = "111434164633233750255"; // teacher messenger id
-const STUDENTS = [{ senderId: "24423234430632948", courses: ["769869403822"] }];
+const STUDENTS = [
+  { senderId: "24423234430632948", courses: ["769869403822"] },
+];
 
 export default async function handler(req, res) {
   console.log("🔹 Starting handler");
 
   // Check Redis env
-  console.log(
-    "Env vars:",
-    process.env.REDIS_REST_URL,
-    process.env.REDIS_REST_TOKEN
-  );
+  console.log("Env vars:", process.env.REDIS_REST_URL, process.env.REDIS_REST_TOKEN);
 
   // Cron job trigger
   if (req.query.cron === "true") {
@@ -46,8 +44,7 @@ export default async function handler(req, res) {
   if (req.method === "POST") {
     try {
       const body = req.body;
-      if (!body || body.object !== "page")
-        return res.status(400).send("Invalid");
+      if (!body || body.object !== "page") return res.status(400).send("Invalid");
 
       body.entry.forEach(async (entry) => {
         if (!entry.messaging) return;
@@ -62,10 +59,7 @@ export default async function handler(req, res) {
 
             if (isTeacher) {
               for (const s of STUDENTS) {
-                await sendMessage(
-                  s.senderId,
-                  `📢 New post in Classroom:\n${msg}`
-                );
+                await sendMessage(s.senderId, `📢 New post in Classroom:\n${msg}`);
               }
             } else {
               // Optional: echo student messages
