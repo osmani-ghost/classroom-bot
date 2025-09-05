@@ -61,7 +61,7 @@ export default async function handler(req, res) {
               }
             } else {
               // Echo student messages (optional)
-              await sendMessage(senderId, `You said: ${msg}`);
+              // await sendMessage(senderId, `You said: ${msg}`);
             }
           } else {
             console.log("ℹ️ Non-message event received:", JSON.stringify(event));
