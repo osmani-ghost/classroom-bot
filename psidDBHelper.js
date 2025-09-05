@@ -9,37 +9,38 @@ async function redisGet(key) {
   });
   if (!res.ok) return null;
   const text = await res.text();
-  if (!text || text === "null") return null;
-  try { return JSON.parse(text); } catch { return null; }
+  return text && text !== "null" ? JSON.parse(text) : null;
 }
 
 async function redisSet(key, value) {
   await fetch(`${REDIS_URL}/${key}`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${REDIS_TOKEN}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${REDIS_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify(value),
   });
 }
 
-// Save PSID for a studentId
-export async function registerPSID(studentId, psid) {
-  const key = `psid:${studentId}`;
-  await redisSet(key, { psid });
+// Map Classroom userId to Messenger PSID
+export async function registerPSID(classroomUserId, psid) {
+  await redisSet(`psid:${classroomUserId}`, { psid });
+}
+
+// Get PSID from Classroom userId
+export async function getPSID(classroomUserId) {
+  const data = await redisGet(`psid:${classroomUserId}`);
+  return data?.psid || null;
 }
 
 // Get all registered PSIDs
 export async function getAllPSIDs() {
-  const key = `psid:all`;
-  const record = (await redisGet(key)) || { psids: [] };
-  return record.psids;
-}
-
-export async function addPSIDToAll(psid) {
-  const key = `psid:all`;
-  let record = (await redisGet(key)) || { psids: [] };
-  if (!record.psids.includes(psid)) record.psids.push(psid);
-  await redisSet(key, record);
+  const keysRes = await fetch(`${REDIS_URL}?scan=psid:*`, {
+    headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+  });
+  const keys = (await keysRes.json()) || [];
+  const psids = [];
+  for (const k of keys) {
+    const d = await redisGet(k);
+    if (d?.psid) psids.push(d.psid);
+  }
+  return psids;
 }
