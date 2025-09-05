@@ -1,9 +1,8 @@
-// cronJob.js
 import { fetchCourses, fetchAssignments, isTurnedIn } from "./classroomHelper.js";
 import { sendMessage } from "./messengerHelper.js";
 import { reminderAlreadySent, markReminderSent } from "./reminderDBHelper.js";
 
-// STUDENTS array (Messenger userIds + enrolled courses)
+// STUDENTS: Messenger userIds + enrolled courses
 const STUDENTS = [
   { senderId: "24423234430632948", courses: ["769869403822"] },
 ];
@@ -21,6 +20,7 @@ export async function checkReminders() {
 
       for (const a of assignments) {
         if (!a.dueDate) continue;
+
         const due = new Date(
           a.dueDate.year,
           a.dueDate.month - 1,
@@ -29,16 +29,15 @@ export async function checkReminders() {
           a.dueDate.minutes || 0
         );
 
-        const diffHours = (due - now) / 1000 / 60 / 60;
-        if (diffHours <= 0) continue; // Past due skip
-
         const turnedIn = await isTurnedIn(courseId, a.id, student.senderId);
-        if (turnedIn) continue; // Already submitted → skip
+        if (turnedIn) continue; // skip if submitted
 
+        const diffHours = (due - now) / 1000 / 60 / 60;
         const reminders = ["24h", "12h", "6h", "2h"];
+
         for (const r of reminders) {
           const h = parseInt(r.replace("h", ""));
-          if (diffHours <= h && !(await reminderAlreadySent(a.id, student.senderId, r))) {
+          if (diffHours <= h && !await reminderAlreadySent(a.id, student.senderId, r)) {
             await sendMessage(
               student.senderId,
               `📝 Reminder: "${a.title}" is due in ${r} for ${course.name}`
