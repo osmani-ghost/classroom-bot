@@ -1,11 +1,10 @@
+// reminderDBHelper.js
 import fs from "fs";
-
 const DB_FILE = "./reminderDB.json";
 
 export function loadDB() {
   if (!fs.existsSync(DB_FILE)) fs.writeFileSync(DB_FILE, "[]");
-  const data = fs.readFileSync(DB_FILE, "utf8");
-  return JSON.parse(data);
+  return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
 }
 
 export function saveDB(data) {
@@ -14,17 +13,13 @@ export function saveDB(data) {
 
 export function reminderAlreadySent(assignmentId, studentId, hours) {
   const db = loadDB();
-  const record = db.find(
-    (r) => r.assignmentId === assignmentId && r.studentId === studentId
-  );
+  const record = db.find(r => r.assignmentId === assignmentId && r.studentId === studentId);
   return record ? record.remindersSent.includes(hours) : false;
 }
 
 export function markReminderSent(assignmentId, studentId, hours) {
   const db = loadDB();
-  let record = db.find(
-    (r) => r.assignmentId === assignmentId && r.studentId === studentId
-  );
+  let record = db.find(r => r.assignmentId === assignmentId && r.studentId === studentId);
   if (!record) {
     record = { assignmentId, studentId, remindersSent: [] };
     db.push(record);

@@ -1,3 +1,4 @@
+// classroomHelper.js
 import { google } from "googleapis";
 
 const oauth2Client = new google.auth.OAuth2(
@@ -6,9 +7,7 @@ const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_REDIRECT_URI
 );
 
-oauth2Client.setCredentials({
-  refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-});
+oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
 
 const classroom = google.classroom({ version: "v1", auth: oauth2Client });
 

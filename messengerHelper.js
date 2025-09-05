@@ -1,3 +1,4 @@
+// messengerHelper.js
 import fetch from "node-fetch";
 
 export async function sendMessage(senderId, text) {
