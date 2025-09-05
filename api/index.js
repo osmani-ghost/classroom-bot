@@ -1,86 +1,63 @@
-// api/index.js
-
-// 🔹 Helper function: Send message back to Messenger
-async function sendMessage(senderId, text) {
-  const PAGE_ACCESS_TOKEN = process.env.MESSENGER_PAGE_ACCESS_TOKEN; // match your Vercel env
-
-  if (!PAGE_ACCESS_TOKEN) {
-    console.error("❌ PAGE_ACCESS_TOKEN is missing in env variables");
-    return;
-  }
-
-  const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
-
-  const body = {
-    recipient: { id: senderId },
-    message: { text: text },
-  };
-
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    const result = await response.json();
-    console.log("✅ Message sent:", result);
-  } catch (error) {
-    console.error("❌ Failed to send message:", error);
-  }
-}
+import { sendMessage } from "../../messengerHelper.js";
+import { checkReminders } from "../../cronJob.js";
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
 
-  // 🔹 Step 0: Cron job check
+  // Cron job trigger
   if (req.query.cron === "true") {
     console.log("⏰ Cron job triggered");
-    // Cron job logic run করতে পারেন এখানে
+    await checkReminders();
     return res.status(200).send("Cron job executed");
   }
 
-  // 🔹 Step 1: Verify webhook (GET request from Facebook)
+  // Webhook verify
   if (req.method === "GET") {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
 
-    console.log("FB sent token:", token);
-    console.log("Our VERIFY_TOKEN from env:", VERIFY_TOKEN);
-
     if (mode === "subscribe" && token === VERIFY_TOKEN) {
       console.log("✅ WEBHOOK_VERIFIED");
       return res.status(200).send(challenge);
     } else {
-      console.error("❌ Webhook verification failed");
       return res.status(403).send("Forbidden");
     }
   }
 
-  // 🔹 Step 2: Handle Messenger messages (POST)
+  // Handle Messenger message
   if (req.method === "POST") {
     try {
       const body = req.body;
       if (!body || body.object !== "page")
-        return res.status(400).send("Invalid request");
+        return res.status(400).send("Invalid");
 
       body.entry.forEach(async (entry) => {
         if (!entry.messaging) return;
-
         entry.messaging.forEach(async (event) => {
           const senderId = event.sender?.id;
           if (!senderId) return;
 
           if (event.message && event.message.text) {
-            const userMessage = event.message.text;
-            console.log(`👤 User (${senderId}) said: ${userMessage}`);
-            await sendMessage(senderId, `You said: ${userMessage}`);
-          } else {
-            console.log(
-              "ℹ️ Non-message event received, skipping:",
-              JSON.stringify(event)
-            );
+            const msg = event.message.text;
+
+            // Example: teacher check (replace with your teacherId check)
+            const isTeacher = senderId === "111434164633233750255";
+            if (isTeacher) {
+              // Notify all students in that course
+              const STUDENTS = [
+                { senderId: "24423234430632948", courses: ["769869403822"] },
+              ];
+              for (const s of STUDENTS) {
+                await sendMessage(
+                  s.senderId,
+                  `📢 New post in Classroom:\n${msg}`
+                );
+              }
+            } else {
+              // Optional: echo student messages
+              await sendMessage(senderId, `You said: ${msg}`);
+            }
           }
         });
       });
@@ -92,12 +69,7 @@ export default async function handler(req, res) {
     }
   }
 
-  return res.status(400).send("Invalid request method.");
+  return res.status(400).send("Invalid request method");
 }
 
-// 🔹 Default bodyParser enabled (Next.js handles JSON automatically)
-export const config = {
-  api: {
-    bodyParser: true,
-  },
-};
+export const config = { api: { bodyParser: true } };
