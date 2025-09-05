@@ -1,6 +1,6 @@
 import { fetchCourses, fetchAssignments } from "./classroomHelper.js";
 import { sendMessage } from "./messengerHelper.js";
-import { reminderAlreadySent, markReminderSent } from "./reminderDBHelper.js";
+import { reminderAlreadySent, markReminderSent } from "./api/reminderDBHelper.js";
 
 // STUDENTS array (Messenger userIds + enrolled courses)
 const STUDENTS = [{ senderId: "24423234430632948", courses: ["769869403822"] }];
