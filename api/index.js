@@ -1,16 +1,20 @@
 import { sendMessage } from "../messengerHelper.js";
 import { checkReminders } from "../cronJob.js";
-import { registerStudent, getAllStudents } from "../studentDB.js";
+
+// Registered FB IDs for testing / initial setup
+let REGISTERED_FB_IDS = [];
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
 
   console.log("🔹 Starting handler");
 
+  // Cron job trigger
   if (req.query.cron === "true") {
     console.log("⏰ Cron job triggered");
     try {
-      await checkReminders();
+      await checkReminders(REGISTERED_FB_IDS);
+      console.log("✅ Cron job executed successfully");
       return res.status(200).send("Cron job executed");
     } catch (err) {
       console.error("❌ Cron job failed:", err);
@@ -18,14 +22,21 @@ export default async function handler(req, res) {
     }
   }
 
+  // Webhook verify
   if (req.method === "GET") {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
-    if (mode === "subscribe" && token === VERIFY_TOKEN) return res.status(200).send(challenge);
-    return res.status(403).send("Forbidden");
+
+    if (mode === "subscribe" && token === VERIFY_TOKEN) {
+      console.log("✅ WEBHOOK_VERIFIED");
+      return res.status(200).send(challenge);
+    } else {
+      return res.status(403).send("Forbidden");
+    }
   }
 
+  // Handle Messenger message (register FB ID & teacher posts)
   if (req.method === "POST") {
     try {
       const body = req.body;
@@ -37,12 +48,16 @@ export default async function handler(req, res) {
           const senderId = event.sender?.id;
           if (!senderId) continue;
 
-          await registerStudent(senderId);
+          // Save FB IDs for reminders
+          if (!REGISTERED_FB_IDS.includes(senderId)) REGISTERED_FB_IDS.push(senderId);
 
+          // Teacher posts / assignments
           if (event.message && event.message.text) {
             const msg = event.message.text;
-            const students = await getAllStudents();
-            for (const s of students) await sendMessage(s, `📢 New post in Classroom:\n${msg}`);
+            // Notify all registered students
+            for (const s of REGISTERED_FB_IDS) {
+              await sendMessage(s, `📢 New post in Classroom:\n${msg}`);
+            }
           }
         }
       }

@@ -3,21 +3,17 @@ import fetch from "node-fetch";
 const REDIS_URL = process.env.REDIS_REST_URL;
 const REDIS_TOKEN = process.env.REDIS_REST_TOKEN;
 
-export async function redisGet(key) {
+async function redisGet(key) {
   const res = await fetch(`${REDIS_URL}/${key}`, {
     headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
   });
   if (!res.ok) return null;
   const text = await res.text();
   if (!text || text === "null") return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(text); } catch { return null; }
 }
 
-export async function redisSet(key, value) {
+async function redisSet(key, value) {
   await fetch(`${REDIS_URL}/${key}`, {
     method: "POST",
     headers: {
