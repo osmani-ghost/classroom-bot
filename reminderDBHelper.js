@@ -1,3 +1,4 @@
+// reminderDBHelper.js (Redis version)
 import fetch from "node-fetch";
 
 const REDIS_URL = process.env.REDIS_REST_URL;
@@ -8,8 +9,12 @@ async function redisGet(key) {
     headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
   });
   const text = await res.text();
-  if (text === null || text === "null") return null;
-  return JSON.parse(text);
+  if (!text || text === "null") return null;   // ✅ fix null check
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;  // JSON parse fail হলে null return
+  }
 }
 
 async function redisSet(key, value) {
@@ -25,13 +30,15 @@ async function redisSet(key, value) {
 
 export async function reminderAlreadySent(assignmentId, studentId, hours) {
   const key = `${assignmentId}:${studentId}`;
-  const record = (await redisGet(key)) || { remindersSent: [] };
+  const record = (await redisGet(key)) || { remindersSent: [] };  // ✅ ensure object
+  if (!record.remindersSent) record.remindersSent = [];           // ✅ safeguard
   return record.remindersSent.includes(hours);
 }
 
 export async function markReminderSent(assignmentId, studentId, hours) {
   const key = `${assignmentId}:${studentId}`;
   let record = (await redisGet(key)) || { remindersSent: [] };
-  record.remindersSent.push(hours);
+  if (!record.remindersSent) record.remindersSent = [];
+  if (!record.remindersSent.includes(hours)) record.remindersSent.push(hours);
   await redisSet(key, record);
 }
