@@ -1,20 +1,35 @@
+// api/index.js
 import { sendMessage } from "../messengerHelper.js";
 import { checkReminders } from "../cronJob.js";
 
-export default async function handler(req, res) {
-  const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
+const TEACHER_ID = "111434164633233750255"; // teacher messenger id
+const STUDENTS = [{ senderId: "24423234430632948", courses: ["769869403822"] }];
 
+export default async function handler(req, res) {
   console.log("🔹 Starting handler");
+
+  // Check Redis env
+  console.log(
+    "Env vars:",
+    process.env.REDIS_REST_URL,
+    process.env.REDIS_REST_TOKEN
+  );
 
   // Cron job trigger
   if (req.query.cron === "true") {
-    console.log("⏰ Cron job triggered");
-    await checkReminders();
-    return res.status(200).send("Cron job executed");
+    try {
+      console.log("⏰ Cron job triggered");
+      await checkReminders();
+      return res.status(200).send("Cron job executed");
+    } catch (err) {
+      console.error("❌ Cron job failed:", err);
+      return res.status(500).send("Cron job failed");
+    }
   }
 
   // Webhook verify
   if (req.method === "GET") {
+    const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
@@ -27,7 +42,7 @@ export default async function handler(req, res) {
     }
   }
 
-  // Handle Messenger message (teacher / student posts)
+  // Handle Messenger message
   if (req.method === "POST") {
     try {
       const body = req.body;
@@ -36,21 +51,16 @@ export default async function handler(req, res) {
 
       body.entry.forEach(async (entry) => {
         if (!entry.messaging) return;
-
         entry.messaging.forEach(async (event) => {
           const senderId = event.sender?.id;
           if (!senderId) return;
 
+          // Teacher post / notice
+          const isTeacher = senderId === TEACHER_ID;
           if (event.message && event.message.text) {
             const msg = event.message.text;
 
-            // Teacher check (your teacher messenger id)
-            const TEACHER_ID = "111434164633233750255";
-            if (senderId === TEACHER_ID) {
-              // Notify all students in courses
-              const STUDENTS = [
-                { senderId: "24423234430632948", courses: ["769869403822"] },
-              ];
+            if (isTeacher) {
               for (const s of STUDENTS) {
                 await sendMessage(
                   s.senderId,
@@ -58,7 +68,7 @@ export default async function handler(req, res) {
                 );
               }
             } else {
-              // Optional: student echo
+              // Optional: echo student messages
               await sendMessage(senderId, `You said: ${msg}`);
             }
           }
