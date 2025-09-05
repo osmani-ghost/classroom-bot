@@ -37,6 +37,8 @@ export async function reminderAlreadySent(assignmentId, studentId, hours) {
   // ensure remindersSent is always an array
   if (!Array.isArray(record.remindersSent)) record.remindersSent = [];
   return record.remindersSent.includes(hours);
+  console.log("Checking Redis for key:", key);
+
 }
 
 // Mark reminder as sent
@@ -46,4 +48,6 @@ export async function markReminderSent(assignmentId, studentId, hours) {
   if (!Array.isArray(record.remindersSent)) record.remindersSent = [];
   record.remindersSent.push(hours);
   await redisSet(key, record);
+  console.log("Checking Redis for key:", key);
+
 }

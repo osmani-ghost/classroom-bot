@@ -45,3 +45,8 @@ export async function checkReminders() {
     console.error("❌ Cron job failed:", err);
   }
 }
+
+console.log("Course:", course.name);
+console.log("Assignment:", a.title, "Due:", due);
+console.log("DiffHours:", diffHours);
+console.log("Student:", student.userId, "TurnedIn:", turnedIn);
