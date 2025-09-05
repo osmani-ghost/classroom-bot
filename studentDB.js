@@ -1,4 +1,4 @@
-import { redisGet, redisSet } from "./reminderDBHelper.js";
+import { redisGet, redisSet } from "./helpers/reminderDBHelper.js";
 
 const STUDENTS_KEY = "registered_students";
 
