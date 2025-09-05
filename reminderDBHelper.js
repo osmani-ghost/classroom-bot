@@ -1,29 +1,38 @@
 // reminderDBHelper.js
-import fs from "fs";
-const DB_FILE = "./reminderDB.json";
+import fetch from "node-fetch";
 
-export function loadDB() {
-  if (!fs.existsSync(DB_FILE)) fs.writeFileSync(DB_FILE, "[]");
-  return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+const REDIS_URL = process.env.REDIS_REST_URL;
+const REDIS_TOKEN = process.env.REDIS_REST_TOKEN;
+
+async function redisGet(key) {
+  const res = await fetch(`${REDIS_URL}/${key}`, {
+    headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+  });
+  const text = await res.text();
+  if (text === null || text === "null") return null;
+  return JSON.parse(text);
 }
 
-export function saveDB(data) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+async function redisSet(key, value) {
+  await fetch(`${REDIS_URL}/${key}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${REDIS_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(value),
+  });
 }
 
-export function reminderAlreadySent(assignmentId, studentId, hours) {
-  const db = loadDB();
-  const record = db.find(r => r.assignmentId === assignmentId && r.studentId === studentId);
-  return record ? record.remindersSent.includes(hours) : false;
+export async function reminderAlreadySent(assignmentId, studentId, hours) {
+  const key = `${assignmentId}:${studentId}`;
+  const record = (await redisGet(key)) || { remindersSent: [] };
+  return record.remindersSent.includes(hours);
 }
 
-export function markReminderSent(assignmentId, studentId, hours) {
-  const db = loadDB();
-  let record = db.find(r => r.assignmentId === assignmentId && r.studentId === studentId);
-  if (!record) {
-    record = { assignmentId, studentId, remindersSent: [] };
-    db.push(record);
-  }
+export async function markReminderSent(assignmentId, studentId, hours) {
+  const key = `${assignmentId}:${studentId}`;
+  let record = (await redisGet(key)) || { remindersSent: [] };
   record.remindersSent.push(hours);
-  saveDB(db);
+  await redisSet(key, record);
 }

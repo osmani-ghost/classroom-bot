@@ -3,7 +3,7 @@ import { fetchCourses, fetchAssignments } from "./classroomHelper.js";
 import { sendMessage } from "./messengerHelper.js";
 import { reminderAlreadySent, markReminderSent } from "./reminderDBHelper.js";
 
-// Example students
+// STUDENTS array (Messenger userIds + enrolled courses)
 const STUDENTS = [
   { senderId: "24423234430632948", courses: ["769869403822"] },
 ];
@@ -14,7 +14,7 @@ export async function checkReminders() {
 
   for (const student of STUDENTS) {
     for (const courseId of student.courses) {
-      const course = courses.find(c => c.id === courseId);
+      const course = courses.find((c) => c.id === courseId);
       if (!course) continue;
 
       const assignments = await fetchAssignments(courseId);
@@ -34,9 +34,12 @@ export async function checkReminders() {
 
         for (const r of reminders) {
           const h = parseInt(r.replace("h", ""));
-          if (diffHours <= h && !reminderAlreadySent(a.id, student.senderId, r)) {
-            await sendMessage(student.senderId, `📝 Reminder: "${a.title}" is due in ${r} for ${course.name}`);
-            markReminderSent(a.id, student.senderId, r);
+          if (diffHours <= h && !await reminderAlreadySent(a.id, student.senderId, r)) {
+            await sendMessage(
+              student.senderId,
+              `📝 Reminder: "${a.title}" is due in ${r} for ${course.name}`
+            );
+            await markReminderSent(a.id, student.senderId, r);
           }
         }
       }
