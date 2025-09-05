@@ -1,4 +1,4 @@
-import { sendMessage } from "../messengerHelper.js";
+import { sendMessage } from "../../messengerHelper.js";
 import { checkReminders } from "../../cronJob.js";
 
 export default async function handler(req, res) {
