@@ -22,6 +22,11 @@ export async function fetchAssignments(courseId) {
   return res.data.courseWork || [];
 }
 
+export async function fetchStudents(courseId) {
+  const res = await classroom.courses.students.list({ courseId });
+  return res.data.students || [];
+}
+
 export async function isTurnedIn(courseId, assignmentId, studentId) {
   const res = await classroom.courses.courseWork.studentSubmissions.list({
     courseId,

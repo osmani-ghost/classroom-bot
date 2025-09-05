@@ -1,15 +1,10 @@
 import { sendMessage } from "../messengerHelper.js";
 import { checkReminders } from "../cronJob.js";
 
-console.log("🔹 Starting handler");
-console.log("Env vars:", process.env.REDIS_REST_URL, process.env.REDIS_REST_TOKEN);
-
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
-  const TEACHER_ID = process.env.TEACHER_ID;
-  const STUDENTS = [
-    { senderId: "24423234430632948", courses: ["769869403822"] },
-  ];
+
+  console.log("🔹 Starting handler");
 
   // Cron job trigger
   if (req.query.cron === "true") {
@@ -19,7 +14,7 @@ export default async function handler(req, res) {
       return res.status(200).send("Cron job executed");
     } catch (err) {
       console.error("❌ Cron job failed:", err);
-      return res.status(500).send("Cron job error");
+      return res.status(500).send("Cron job failed");
     }
   }
 
@@ -37,30 +32,29 @@ export default async function handler(req, res) {
     }
   }
 
-  // Handle Messenger message (POST)
+  // Handle Messenger message
   if (req.method === "POST") {
     try {
       const body = req.body;
-      if (!body || body.object !== "page") return res.status(400).send("Invalid");
+      if (!body || body.object !== "page")
+        return res.status(400).send("Invalid");
 
-      for (const entry of body.entry || []) {
-        for (const event of entry.messaging || []) {
+      for (const entry of body.entry) {
+        if (!entry.messaging) continue;
+        for (const event of entry.messaging) {
           const senderId = event.sender?.id;
           if (!senderId) continue;
 
-          // Teacher post detection
+          // Teacher posts / assignments
           if (event.message && event.message.text) {
-            const isTeacher = senderId === TEACHER_ID;
-            if (isTeacher) {
-              for (const s of STUDENTS) {
-                await sendMessage(
-                  s.senderId,
-                  `📢 New post in Classroom:\n${event.message.text}`
-                );
-              }
-            } else {
-              // Optional: echo student messages
-              await sendMessage(senderId, `You said: ${event.message.text}`);
+            const msg = event.message.text;
+
+            // Notify all students in all courses
+            // You can fetch from classroomHelper.fetchStudents if you want dynamic roster
+            // Example below assumes a test student array
+            const STUDENTS = ["24423234430632948"];
+            for (const s of STUDENTS) {
+              await sendMessage(s, `📢 New post in Classroom:\n${msg}`);
             }
           }
         }
