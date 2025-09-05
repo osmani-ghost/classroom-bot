@@ -10,7 +10,11 @@ async function redisGet(key) {
   if (!res.ok) return null;
   const text = await res.text();
   if (!text || text === "null") return null;
-  try { return JSON.parse(text); } catch { return null; }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 async function redisSet(key, value) {
@@ -24,17 +28,34 @@ async function redisSet(key, value) {
   });
 }
 
+// Reminders tracking
 export async function reminderAlreadySent(assignmentId, studentId, hours) {
-  const key = `${assignmentId}:${studentId}`;
+  const key = `reminder:${assignmentId}:${studentId}`;
   const record = (await redisGet(key)) || { remindersSent: [] };
   if (!Array.isArray(record.remindersSent)) record.remindersSent = [];
   return record.remindersSent.includes(hours);
 }
 
 export async function markReminderSent(assignmentId, studentId, hours) {
-  const key = `${assignmentId}:${studentId}`;
-  let record = (await redisGet(key)) || { remindersSent: [] };
+  const key = `reminder:${assignmentId}:${studentId}`;
+  const record = (await redisGet(key)) || { remindersSent: [] };
   if (!Array.isArray(record.remindersSent)) record.remindersSent = [];
   record.remindersSent.push(hours);
   await redisSet(key, record);
+}
+
+// PSID ↔ Classroom mapping
+export async function mapClassroomToPSID() {
+  const keysRes = await fetch(`${REDIS_URL}?scan=1`, {
+    headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+  });
+  const data = await keysRes.json();
+  const mapping = {};
+  for (const key of data.keys || []) {
+    const value = await redisGet(key);
+    if (value?.psid && value?.classroomId) {
+      mapping[value.classroomId] = value.psid;
+    }
+  }
+  return mapping;
 }

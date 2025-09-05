@@ -1,19 +1,16 @@
 import { sendMessage } from "../messengerHelper.js";
 import { checkReminders } from "../cronJob.js";
-
-// Registered FB IDs for testing / initial setup
-let REGISTERED_FB_IDS = [];
+import { registerPSID, addPSIDToAll, getAllPSIDs } from "../psidDBHelper.js";
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
-
   console.log("🔹 Starting handler");
 
   // Cron job trigger
   if (req.query.cron === "true") {
     console.log("⏰ Cron job triggered");
     try {
-      await checkReminders(REGISTERED_FB_IDS);
+      await checkReminders();
       console.log("✅ Cron job executed successfully");
       return res.status(200).send("Cron job executed");
     } catch (err) {
@@ -27,7 +24,6 @@ export default async function handler(req, res) {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
-
     if (mode === "subscribe" && token === VERIFY_TOKEN) {
       console.log("✅ WEBHOOK_VERIFIED");
       return res.status(200).send(challenge);
@@ -36,11 +32,12 @@ export default async function handler(req, res) {
     }
   }
 
-  // Handle Messenger message (register FB ID & teacher posts)
+  // Handle Messenger message
   if (req.method === "POST") {
     try {
       const body = req.body;
-      if (!body || body.object !== "page") return res.status(400).send("Invalid");
+      if (!body || body.object !== "page")
+        return res.status(400).send("Invalid");
 
       for (const entry of body.entry) {
         if (!entry.messaging) continue;
@@ -48,20 +45,25 @@ export default async function handler(req, res) {
           const senderId = event.sender?.id;
           if (!senderId) continue;
 
-          // Save FB IDs for reminders
-          if (!REGISTERED_FB_IDS.includes(senderId)) REGISTERED_FB_IDS.push(senderId);
+          // Register PSID automatically
+          await addPSIDToAll(senderId);
+          if (event.message && event.message.text && event.message.text.startsWith("register:")) {
+            const studentId = event.message.text.split(":")[1].trim();
+            await registerPSID(studentId, senderId);
+            await sendMessage(senderId, `✅ You are registered!`);
+            continue;
+          }
 
           // Teacher posts / assignments
           if (event.message && event.message.text) {
             const msg = event.message.text;
-            // Notify all registered students
-            for (const s of REGISTERED_FB_IDS) {
-              await sendMessage(s, `📢 New post in Classroom:\n${msg}`);
+            const psids = await getAllPSIDs();
+            for (const psid of psids) {
+              await sendMessage(psid, `📢 New post in Classroom:\n${msg}`);
             }
           }
         }
       }
-
       return res.status(200).send("EVENT_RECEIVED");
     } catch (err) {
       console.error("❌ Error handling message:", err);
