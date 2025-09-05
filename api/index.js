@@ -1,5 +1,5 @@
 import { sendMessage } from "./messengerHelper.js";
-import { checkReminders } from "../../cronJob.js";
+import { checkReminders } from "./cronJob.js";
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
