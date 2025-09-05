@@ -1,4 +1,3 @@
-// reminderDBHelper.js
 import fetch from "node-fetch";
 
 const REDIS_URL = process.env.REDIS_REST_URL;
