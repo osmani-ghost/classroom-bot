@@ -2,10 +2,9 @@ import { sendMessage } from "../messengerHelper.js";
 import { checkReminders } from "../cronJob.js";
 
 export default async function handler(req, res) {
-  console.log("🔹 Starting handler");  // ✅ debug log
-  console.log("Env vars:", process.env.REDIS_REST_URL, process.env.REDIS_REST_TOKEN); // ✅ check env
-
   const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
+
+  console.log("🔹 Starting handler");
 
   // Cron job trigger
   if (req.query.cron === "true") {
@@ -28,14 +27,16 @@ export default async function handler(req, res) {
     }
   }
 
-  // Handle Messenger message
+  // Handle Messenger message (teacher / student posts)
   if (req.method === "POST") {
     try {
       const body = req.body;
-      if (!body || body.object !== "page") return res.status(400).send("Invalid");
+      if (!body || body.object !== "page")
+        return res.status(400).send("Invalid");
 
       body.entry.forEach(async (entry) => {
         if (!entry.messaging) return;
+
         entry.messaging.forEach(async (event) => {
           const senderId = event.sender?.id;
           if (!senderId) return;
@@ -43,14 +44,21 @@ export default async function handler(req, res) {
           if (event.message && event.message.text) {
             const msg = event.message.text;
 
-            // Example: teacher check
-            const isTeacher = senderId === "111434164633233750255"; 
-            if (isTeacher) {
-              const STUDENTS = [{ senderId: "24423234430632948", courses: ["769869403822"] }];
+            // Teacher check (your teacher messenger id)
+            const TEACHER_ID = "111434164633233750255";
+            if (senderId === TEACHER_ID) {
+              // Notify all students in courses
+              const STUDENTS = [
+                { senderId: "24423234430632948", courses: ["769869403822"] },
+              ];
               for (const s of STUDENTS) {
-                await sendMessage(s.senderId, `📢 New post in Classroom:\n${msg}`);
+                await sendMessage(
+                  s.senderId,
+                  `📢 New post in Classroom:\n${msg}`
+                );
               }
             } else {
+              // Optional: student echo
               await sendMessage(senderId, `You said: ${msg}`);
             }
           }
