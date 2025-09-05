@@ -11,10 +11,11 @@ export default async function handler(req, res) {
     console.log("⏰ Cron job triggered");
     try {
       await checkReminders();
+      console.log("✅ Cron job executed successfully");
       return res.status(200).send("Cron job executed");
     } catch (err) {
       console.error("❌ Cron job failed:", err);
-      return res.status(500).send("Cron job failed");
+      return res.status(500).send("Cron job failed: " + err.message);
     }
   }
 
