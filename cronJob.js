@@ -1,6 +1,6 @@
 import { fetchCourses, fetchAssignments, fetchStudents, isTurnedIn } from "./helpers/classroomHelper.js";
 import { sendMessage } from "./helpers/messengerHelper.js";
-import { reminderAlreadySent, markReminderSent } from "./helpers/reminderDBHelper.js";
+import { reminderAlreadySent, markReminderSent } from "./helpers/redisHelper.js";
 import { getPSID } from "./helpers/psidDBHelper.js";
 
 export async function checkReminders() {
