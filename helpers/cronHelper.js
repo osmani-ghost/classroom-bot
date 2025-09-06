@@ -17,7 +17,7 @@ import {
 } from "./redisHelper.js";
 
 // =========================
-// OAuth client per user
+// OAuth client for each user
 // =========================
 function createOAuth2ClientForUser(refreshToken) {
   const oauth2Client = new google.auth.OAuth2(
@@ -30,12 +30,13 @@ function createOAuth2ClientForUser(refreshToken) {
 }
 
 // =========================
-// Format Date+Time → AM/PM
+// Format BDT due date/time
 // =========================
 function formatDueDateTime(dueDate, dueTime) {
   if (!dueDate) return "End of day";
 
-  let hours = (dueTime?.hours || 23) + 6; // UTC to BDT
+  // Convert UTC to BDT (+6)
+  let hours = ((dueTime?.hours || 23) + 6) % 24;
   const minutes = dueTime?.minutes || 0;
   const ampm = hours >= 12 ? "PM" : "AM";
   hours = hours % 12 || 12;
@@ -49,11 +50,11 @@ function formatDueDateTime(dueDate, dueTime) {
 }
 
 // =========================
-// Check New Content
+// Check new content (Announcements & Materials)
 // =========================
 async function checkNewContent(oauth2Client, googleId, courses) {
-  console.log(`[Cron] =========================`);
   console.log(`[Cron] Checking new content for user: ${googleId}`);
+
   for (const course of courses) {
     if (course.ownerId === googleId) {
       console.log(`[Cron][DEBUG] Skipping teacher course: ${course.name}`);
@@ -61,8 +62,6 @@ async function checkNewContent(oauth2Client, googleId, courses) {
     }
 
     const lastCheckedString = await getLastCheckedTime(course.id);
-    console.log(`[Cron][DEBUG] LastChecked for ${course.name}: ${lastCheckedString}`);
-
     const announcements = await fetchAnnouncements(oauth2Client, course.id);
     const materials = await fetchMaterials(oauth2Client, course.id);
 
@@ -71,15 +70,13 @@ async function checkNewContent(oauth2Client, googleId, courses) {
     );
 
     if (allContent.length === 0) {
-      console.log(`[Cron][DEBUG] No content found in ${course.name}`);
+      console.log(`[Cron][DEBUG] No content for course: ${course.name}`);
       continue;
     }
 
     const latestContentTime = allContent[0].updateTime;
 
-    // ------------------------
-    // First Run → last 2 hours
-    // ------------------------
+    // First run → only last 2 hours
     if (!lastCheckedString) {
       console.log(`[Cron][DEBUG] First run for ${course.name}, sending last 2h content...`);
       const now = new Date();
@@ -92,22 +89,23 @@ async function checkNewContent(oauth2Client, googleId, courses) {
           console.log(`[Cron][SEND] ${message}`);
           await sendMessageToGoogleUser(googleId, message);
         } else {
-          console.log(`[Cron][DEBUG] Skipping older content: ${content.title || content.text}`);
+          console.log(`[Cron][DEBUG] Content older than 2h, skipping: ${content.title || content.text}`);
         }
       }
-      // save slightly earlier time to catch exact same timestamp in next run
-      await setLastCheckedTime(course.id, new Date(new Date(latestContentTime).getTime() - 1).toISOString());
-      console.log(`[Cron][DEBUG] LastChecked updated for ${course.name}: ${latestContentTime}`);
+      // Save lastChecked slightly before latest to catch edge cases
+      await setLastCheckedTime(
+        course.id,
+        new Date(new Date(latestContentTime).getTime() - 1).toISOString()
+      );
       continue;
     }
 
-    // ------------------------
-    // Normal run → only new content
-    // ------------------------
-    console.log(`[Cron][DEBUG] Normal run, comparing with lastChecked=${lastCheckedString}`);
+    // Normal run → only new content since lastChecked
+    console.log(`[Cron][DEBUG] LastChecked for ${course.name}: ${lastCheckedString}`);
     for (const content of allContent) {
-      console.log(`[Cron][DEBUG] content.updateTime=${content.updateTime}`);
-      if (new Date(content.updateTime) > new Date(lastCheckedString)) {
+      const contentTime = new Date(content.updateTime);
+      console.log(`[Cron][DEBUG] Comparing content.updateTime=${contentTime} >= lastChecked=${lastCheckedString}`);
+      if (contentTime > new Date(lastCheckedString)) {
         const message = content.title
           ? `📚 New Material in ${course.name}:\n"${content.title}"`
           : `📢 New Announcement in ${course.name}:\n"${content.text}"`;
@@ -118,16 +116,17 @@ async function checkNewContent(oauth2Client, googleId, courses) {
         break;
       }
     }
+
+    // Update lastChecked for next cron run
     await setLastCheckedTime(course.id, new Date(latestContentTime).toISOString());
     console.log(`[Cron][DEBUG] LastChecked updated for ${course.name}: ${latestContentTime}`);
   }
 }
 
 // =========================
-// Assignment Reminders
+// Assignment reminders
 // =========================
 async function checkReminders(oauth2Client, googleId, courses) {
-  console.log(`[Cron] =========================`);
   console.log(`[Cron] Checking assignment reminders for user: ${googleId}`);
   const now = new Date();
 
@@ -141,12 +140,10 @@ async function checkReminders(oauth2Client, googleId, courses) {
     console.log(`[Cron][DEBUG] Course ${course.name} -> Assignments: ${assignments.length}`);
 
     for (const a of assignments) {
-      if (!a.dueDate || !a.dueTime) {
-        console.log(`[Cron][DEBUG] Skipping assignment with no due date/time: ${a.title}`);
-        continue;
-      }
+      if (!a.dueDate || !a.dueTime) continue;
 
-      const due = new Date(
+      // Convert UTC Classroom due time
+      const dueUTC = new Date(
         Date.UTC(
           a.dueDate.year,
           a.dueDate.month - 1,
@@ -156,34 +153,33 @@ async function checkReminders(oauth2Client, googleId, courses) {
         )
       );
 
-      const diffHours = (due.getTime() - now.getTime()) / (1000 * 60 * 60);
-      console.log(`[Cron][DEBUG] Assignment "${a.title}" due=${due}, diffHours=${diffHours.toFixed(2)}`);
-
-      if (diffHours < 0) {
-        console.log(`[Cron][DEBUG] Assignment "${a.title}" already past due.`);
-        continue; // past due
-      }
-      if (diffHours > 24) {
-        console.log(`[Cron][DEBUG] Assignment "${a.title}" due far in future.`);
-        continue; // future beyond 24h, no reminder
-      }
+      const diffHours = (dueUTC.getTime() - now.getTime()) / (1000 * 60 * 60);
+      console.log(`[Cron][DEBUG] Assignment "${a.title}" due=${dueUTC}, diffHours=${diffHours.toFixed(2)}`);
 
       const turnedIn = await isTurnedIn(oauth2Client, course.id, a.id, "me");
       console.log(`[Cron][DEBUG] TurnedIn=${turnedIn}`);
       if (turnedIn) continue;
 
-      // Reminder windows: 24h,12h,6h,2h,0h
+      // Reminder windows: 24h, 12h, 6h, 2h, 0h (exact due time)
       const reminders = [24, 12, 6, 2, 0];
       for (const h of reminders) {
         const alreadySent = await reminderAlreadySent(a.id, googleId, `${h}h`);
         console.log(`[Cron][DEBUG] Checking reminder ${h}h: alreadySent=${alreadySent}`);
-        if (diffHours <= h && !alreadySent) {
+        if ((diffHours <= h) && !alreadySent && diffHours >= 0) {
           const formattedTime = formatDueDateTime(a.dueDate, a.dueTime);
           const message = `📝 Reminder: Your assignment "${a.title}" is due for the course ${course.name}.\nLast submission: ${formattedTime}`;
           console.log(`[Cron][SEND] ${message}`);
           await sendMessageToGoogleUser(googleId, message);
           await markReminderSent(a.id, googleId, `${h}h`);
-          break; // prevent multiple reminders in same run
+          break; // only one reminder per run
+        } else if (diffHours <= 0 && !alreadySent) {
+          // last moment reminder
+          const formattedTime = formatDueDateTime(a.dueDate, a.dueTime);
+          const message = `📝 FINAL Reminder: Your assignment "${a.title}" is due NOW for course ${course.name}!\nSubmission time: ${formattedTime}`;
+          console.log(`[Cron][SEND] ${message}`);
+          await sendMessageToGoogleUser(googleId, message);
+          await markReminderSent(a.id, googleId, `${h}h`);
+          break;
         }
       }
     }
@@ -191,7 +187,7 @@ async function checkReminders(oauth2Client, googleId, courses) {
 }
 
 // =========================
-// Main Cron Job
+// Main cron
 // =========================
 export async function runCronJobs() {
   console.log("⏰ Cron job started for all registered users...");
@@ -201,7 +197,7 @@ export async function runCronJobs() {
   for (const googleId of allGoogleIds) {
     const user = await getUser(googleId);
     if (!user || !user.refreshToken) {
-      console.log(`[Cron][DEBUG] Skipping user with no refresh token: ${googleId}`);
+      console.log(`[Cron][DEBUG] No refresh token for user ${googleId}, skipping.`);
       continue;
     }
 
@@ -209,7 +205,12 @@ export async function runCronJobs() {
     const courses = await fetchCourses(userOAuthClient);
     console.log(`[Cron][DEBUG] User ${googleId} has ${courses.length} courses.`);
 
+    console.log("[Cron] =========================");
     await checkReminders(userOAuthClient, googleId, courses);
+
+    console.log("[Cron] =========================");
     await checkNewContent(userOAuthClient, googleId, courses);
   }
+
+  console.log("⏰ Cron job finished for all users.");
 }
