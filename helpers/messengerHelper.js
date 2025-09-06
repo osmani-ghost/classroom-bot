@@ -1,39 +1,57 @@
 import fetch from "node-fetch";
-import { getPsidForGoogleId } from "./redisHelper.js";
+import { getUser } from "./redisHelper.js";
 
-// এই ফাংশনটি সরাসরি মেসেঞ্জার PSID দিয়ে মেসেজ পাঠায়
-export async function sendRawMessage(psid, text) {
-  const PAGE_ACCESS_TOKEN = process.env.MESSENGER_PAGE_ACCESS_TOKEN;
-  if (!PAGE_ACCESS_TOKEN) {
-    console.error("❌ PAGE_ACCESS_TOKEN is missing.");
-    return;
-  }
-
-  const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
-  const body = { recipient: { id: psid }, message: { text } };
-
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const result = await response.json();
-    console.log("✅ Message sent API Response:", result);
-  } catch (error) {
-    console.error("❌ Failed to send message:", error);
-  }
+async function sendApiRequest(payload) {
+    const PAGE_ACCESS_TOKEN = process.env.MESSENGER_PAGE_ACCESS_TOKEN;
+    if (!PAGE_ACCESS_TOKEN) return console.error("❌ PAGE_ACCESS_TOKEN is missing.");
+    
+    const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
+    try {
+        console.log(`[Messenger] Sending API request to PSID: ${payload.recipient.id}`);
+        const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        });
+        const result = await response.json();
+        if (result.error) {
+            console.error("[Messenger] API Error:", result.error);
+        } else {
+            console.log("[Messenger] API Response:", result);
+        }
+    } catch (error) {
+        console.error("❌ Failed to send message:", error);
+    }
 }
 
-// এই ফাংশনটি গুগল আইডি ব্যবহার করে মেসেজ পাঠায়
+export async function sendRawMessage(psid, text) {
+    const payload = { recipient: { id: psid }, message: { text } };
+    await sendApiRequest(payload);
+}
+
+export async function sendLoginButton(psid) {
+    const loginUrl = `${process.env.PUBLIC_URL}/api/auth/google?psid=${psid}`;
+    const payload = {
+        recipient: { id: psid },
+        message: {
+            attachment: {
+                type: "template",
+                payload: {
+                    template_type: "button",
+                    text: "Welcome! Please log in with your university Google account to receive reminders.",
+                    buttons: [{ type: "web_url", url: loginUrl, title: "Login with Google" }],
+                },
+            },
+        },
+    };
+    await sendApiRequest(payload);
+}
+
 export async function sendMessageToGoogleUser(googleId, text) {
-  const psidData = await getPsidForGoogleId(googleId);
-  const psid = psidData ? psidData.psid : null;
-
-  if (!psid) {
-    console.error(`⚠️ No Messenger PSID mapped for Google ID: ${googleId}. Skipping message.`);
-    return;
-  }
-
-  await sendRawMessage(psid, text);
+    const user = await getUser(googleId);
+    if (!user || !user.psid) {
+        console.error(`⚠️ No PSID mapped for Google ID: ${googleId}.`);
+        return;
+    }
+    await sendRawMessage(user.psid, text);
 }

@@ -1,11 +1,11 @@
-import { sendRawMessage } from "../helpers/messengerHelper.js";
+import { sendLoginButton, sendRawMessage } from "../helpers/messengerHelper.js";
 import { runCronJobs } from "../helpers/cronHelper.js";
-import { mapGoogleIdToPsid, isPsidMapped } from "../helpers/redisHelper.js";
+import { isPsidRegistered } from "../helpers/redisHelper.js";
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
 
-  // Cron job ট্রিগার
+  // --- ক্রন জব ট্রিগার ---
   if (req.query.cron === "true") {
     try {
       await runCronJobs();
@@ -16,19 +16,18 @@ export default async function handler(req, res) {
     }
   }
 
-  // Webhook ভেরিফিকেশন
+  // --- ফেসবুক ওয়েবহুক ভেরিফিকেশন (GET রিকোয়েস্ট) ---
   if (req.method === "GET") {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
     if (mode === "subscribe" && token === VERIFY_TOKEN) {
-      console.log("✅ WEBHOOK_VERIFIED");
       return res.status(200).send(challenge);
     }
     return res.status(403).send("Forbidden");
   }
 
-  // মেসেঞ্জারের মেসেজ হ্যান্ডেল করা
+  // --- মেসেঞ্জারের মেসেজ হ্যান্ডেল করা (POST রিকোয়েস্ট) ---
   if (req.method === "POST") {
     try {
       const body = req.body;
@@ -38,26 +37,21 @@ export default async function handler(req, res) {
         for (const event of entry.messaging) {
           const senderId = event.sender?.id;
           if (!senderId) continue;
-
-          if (event.message && event.message.text) {
-            const msg = event.message.text.trim();
-
-            if (msg.toLowerCase().startsWith("link:")) {
-              const googleId = msg.split(":")[1]?.trim();
-              if (googleId) {
-                await mapGoogleIdToPsid(googleId, senderId);
-                await sendRawMessage(senderId, `✅ Success! Your account is now linked.`);
-              } else {
-                await sendRawMessage(senderId, `⚠️ Please provide your Google ID. Example: link:123456789`);
-              }
+          
+          // --- এটাই মূল সমাধান ---
+          // শুধুমাত্র আসল মেসেজের উত্তর দেওয়া হবে, প্রতিধ্বনি বা অন্য কিছু নয়
+          if (event.message) {
+            console.log(`[Webhook] Received a message event from PSID: ${senderId}`);
+            
+            const isRegistered = await isPsidRegistered(senderId);
+            if (isRegistered) {
+              await sendRawMessage(senderId, `Your account is already linked and active.`);
             } else {
-              const isLinked = await isPsidMapped(senderId);
-              if (isLinked) {
-                await sendRawMessage(senderId, `Your account is already linked. You will receive notifications automatically.`);
-              } else {
-                await sendRawMessage(senderId, `Hi! To link your account for reminders, please type "link:" followed by your Google Classroom ID.`);
-              }
+              await sendLoginButton(senderId);
             }
+          } else {
+            // অন্য সব ইভেন্ট (যেমন: ডেলিভারি, ইকো) উপেক্ষা করা হবে
+            console.log(`[Webhook] Ignoring non-message event from PSID: ${senderId}`);
           }
         }
       }

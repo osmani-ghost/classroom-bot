@@ -1,58 +1,46 @@
 import { google } from "googleapis";
 
-// OAuth2 ক্লায়েন্ট মাত্র একবার তৈরি করা হচ্ছে
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI
-);
-
-// রিফ্রেশ টোকেন সেট করা হচ্ছে
-oauth2Client.setCredentials({
-  refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-});
-
-// ক্লাসরুম এপিআই অবজেক্ট তৈরি করা হচ্ছে
-const classroom = google.classroom({ version: "v1", auth: oauth2Client });
-
-// === এক্সপোর্ট করা ফাংশনগুলো ===
-
-export async function fetchCourses() {
-  const res = await classroom.courses.list();
-  return res.data.courses || [];
+async function executeApiCall(apiCall) {
+    try {
+        const response = await apiCall();
+        return response.data || {};
+    } catch (error) {
+        console.error("❌ Google API Error:", error.response?.data?.error || error.message);
+        return {}; // এরর হলেও যেন অ্যাপ ক্র্যাশ না করে
+    }
 }
 
-export async function fetchAssignments(courseId) {
-  const res = await classroom.courses.courseWork.list({ courseId });
-  return res.data.courseWork || [];
+export async function fetchCourses(oauth2Client) {
+    const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+    const data = await executeApiCall(() => classroom.courses.list({ courseStates: ["ACTIVE"] }));
+    return data.courses || [];
 }
 
-export async function fetchStudents(courseId) {
-  const res = await classroom.courses.students.list({ courseId });
-  return res.data.students || [];
+export async function fetchAssignments(oauth2Client, courseId) {
+    const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+    const data = await executeApiCall(() => classroom.courses.courseWork.list({ courseId }));
+    return data.courseWork || [];
 }
 
-export async function isTurnedIn(courseId, assignmentId, studentId) {
-  const res = await classroom.courses.courseWork.studentSubmissions.list({
-    courseId,
-    courseWorkId: assignmentId,
-    userId: studentId,
-  });
-  const submission = res.data.studentSubmissions?.[0];
-  return submission?.state === "TURNED_IN";
+export async function isTurnedIn(oauth2Client, courseId, assignmentId, studentId) {
+    const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+    const data = await executeApiCall(() => classroom.courses.courseWork.studentSubmissions.list({
+        courseId,
+        courseWorkId: assignmentId,
+        userId: studentId,
+    }));
+    const submission = data.studentSubmissions?.[0];
+    return submission?.state === "TURNED_IN";
 }
 
-export async function fetchAnnouncements(courseId) {
-  const res = await classroom.courses.announcements.list({
-    courseId: courseId,
-    orderBy: 'updateTime desc',
-  });
-  return res.data.announcements || [];
+export async function fetchAnnouncements(oauth2Client, courseId) {
+    const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+    const data = await executeApiCall(() => classroom.courses.announcements.list({ courseId, orderBy: 'updateTime desc' }));
+    return data.announcements || [];
 }
-export async function fetchMaterials(courseId) {
-    const res = await classroom.courses.courseWorkMaterials.list({
-        courseId: courseId,
-        orderBy: 'updateTime desc',
-    });
-    return res.data.courseWorkMaterial || [];
+
+export async function fetchMaterials(oauth2Client, courseId) {
+    const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+    const data = await executeApiCall(() => classroom.courses.courseWorkMaterials.list({ courseId, orderBy: 'updateTime desc' }));
+    return data.courseWorkMaterial || [];
 }
