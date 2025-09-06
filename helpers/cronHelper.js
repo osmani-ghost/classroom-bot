@@ -16,7 +16,9 @@ import {
   setLastCheckedTime,
 } from "./redisHelper.js";
 
-// ইউজারের জন্য ব্যক্তিগত ক্লায়েন্ট তৈরি করে
+// =========================
+// ইউজারের জন্য OAuth client
+// =========================
 function createOAuth2ClientForUser(refreshToken) {
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
@@ -27,15 +29,16 @@ function createOAuth2ClientForUser(refreshToken) {
   return oauth2Client;
 }
 
-// সময় + তারিখকে AM/PM ফরম্যাটে সাজায় (BDT +6)
+// =========================
+// Date + Time → AM/PM
+// =========================
 function formatDueDateTime(dueDate, dueTime) {
   if (!dueDate) return "End of day";
 
   let hours = (dueTime?.hours || 23) + 6; // UTC to BDT
   const minutes = dueTime?.minutes || 0;
   const ampm = hours >= 12 ? "PM" : "AM";
-  hours = hours % 12;
-  hours = hours ? hours : 12;
+  hours = hours % 12 || 12;
   const minutesStr = minutes < 10 ? "0" + minutes : minutes;
 
   const dateStr = `${dueDate.day.toString().padStart(2, "0")}-${dueDate.month
@@ -45,15 +48,18 @@ function formatDueDateTime(dueDate, dueTime) {
   return `${dateStr}, ${hours}:${minutesStr} ${ampm}`;
 }
 
-// নতুন কনটেন্ট চেক করার ফাংশন
+// =========================
+// Check new content
+// =========================
 async function checkNewContent(oauth2Client, googleId, courses) {
   console.log(`[Cron] Checking new content for user: ${googleId}`);
   for (const course of courses) {
-    if (course.ownerId === googleId) continue; // teacher skip
+    if (course.ownerId === googleId) continue; // skip teacher
 
     const lastCheckedString = await getLastCheckedTime(course.id);
     const announcements = await fetchAnnouncements(oauth2Client, course.id);
     const materials = await fetchMaterials(oauth2Client, course.id);
+
     const allContent = [...announcements, ...materials].sort(
       (a, b) => new Date(b.updateTime) - new Date(a.updateTime)
     );
@@ -61,7 +67,7 @@ async function checkNewContent(oauth2Client, googleId, courses) {
     if (allContent.length === 0) continue;
     const latestContentTime = allContent[0].updateTime;
 
-    // ✅ প্রথমবার run হলে → last 2 hours content পাঠাবে
+    // First run → last 2 hours
     if (!lastCheckedString) {
       console.log(`[Cron][DEBUG] First run for ${course.name}, sending last 2h content...`);
       const now = new Date();
@@ -79,7 +85,7 @@ async function checkNewContent(oauth2Client, googleId, courses) {
       continue;
     }
 
-    // ✅ পরেরবার → শুধুমাত্র নতুন content
+    // Normal run → only new content
     for (const content of allContent) {
       console.log(`[Cron][DEBUG] Comparing content.updateTime=${content.updateTime} > lastChecked=${lastCheckedString}`);
       if (new Date(content.updateTime) > new Date(lastCheckedString)) {
@@ -98,12 +104,15 @@ async function checkNewContent(oauth2Client, googleId, courses) {
   }
 }
 
-// অ্যাসাইনমেন্ট রিমাইন্ডার চেক করার ফাংশন
+// =========================
+// Assignment reminders
+// =========================
 async function checkReminders(oauth2Client, googleId, courses) {
-  console.log(`[Cron] Checking reminders for user: ${googleId}`);
+  console.log(`[Cron] Checking assignment reminders for user: ${googleId}`);
   const now = new Date();
+
   for (const course of courses) {
-    if (course.ownerId === googleId) continue; // teacher skip
+    if (course.ownerId === googleId) continue; // skip teacher
 
     const assignments = await fetchAssignments(oauth2Client, course.id);
     console.log(`[Cron][DEBUG] Course ${course.name} -> Assignments: ${assignments.length}`);
@@ -124,30 +133,31 @@ async function checkReminders(oauth2Client, googleId, courses) {
 
       console.log(`[Cron][DEBUG] Assignment "${a.title}" due=${due}, diffHours=${diffHours.toFixed(2)}`);
 
-      if (diffHours < 0 || diffHours > 24.5) continue;
+      if (diffHours < 0 || diffHours > 24.5) continue; // ignore far future/past
 
       const turnedIn = await isTurnedIn(oauth2Client, course.id, a.id, "me");
       console.log(`[Cron][DEBUG] TurnedIn=${turnedIn}`);
 
       const reminders = [1, 2, 6, 12, 24];
       for (const h of reminders) {
-        if (
-          diffHours <= h &&
-          !(await reminderAlreadySent(a.id, googleId, `${h}h`))
-        ) {
+        const alreadySent = await reminderAlreadySent(a.id, googleId, `${h}h`);
+        console.log(`[Cron][DEBUG] Checking reminder ${h}h: alreadySent=${alreadySent}`);
+        if (diffHours <= h && !alreadySent) {
           const formattedTime = formatDueDateTime(a.dueDate, a.dueTime);
           const message = `📝 Reminder: Your assignment "${a.title}" is due for the course ${course.name}.\nLast submission: ${formattedTime}`;
           console.log(`[Cron][SEND] ${message}`);
           await sendMessageToGoogleUser(googleId, message);
           await markReminderSent(a.id, googleId, `${h}h`);
-          break;
+          break; // prevent multiple reminders in same run
         }
       }
     }
   }
 }
 
-// মূল ক্রন ফাংশন
+// =========================
+// Main cron
+// =========================
 export async function runCronJobs() {
   console.log("⏰ Cron job started for all registered users...");
   const allGoogleIds = await getAllUserGoogleIds();
