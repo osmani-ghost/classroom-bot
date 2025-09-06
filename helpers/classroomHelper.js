@@ -45,7 +45,14 @@ export async function isTurnedIn(courseId, assignmentId, studentId) {
 export async function fetchAnnouncements(courseId) {
   const res = await classroom.courses.announcements.list({
     courseId: courseId,
-    orderBy: 'updateTime desc', // নতুন পোস্টগুলো আগে আসবে
+    orderBy: 'updateTime desc',
   });
   return res.data.announcements || [];
+}
+export async function fetchMaterials(courseId) {
+    const res = await classroom.courses.courseWorkMaterials.list({
+        courseId: courseId,
+        orderBy: 'updateTime desc',
+    });
+    return res.data.courseWorkMaterial || [];
 }

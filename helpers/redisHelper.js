@@ -8,7 +8,7 @@ async function redisCommand(command, ...args) {
     console.error("❌ Redis URL or Token is missing.");
     return null;
   }
-  const response = await fetch(`${REDIS_URL}/${command}/${args.join('/')}`, {
+  const response = await fetch(`${REDIS_URL}/${command}/${args.join("/")}`, {
     headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
   });
   if (!response.ok) return null;
@@ -18,50 +18,63 @@ async function redisCommand(command, ...args) {
 // ---- ম্যাপিং ফাংশন ----
 export async function getPsidForGoogleId(googleId) {
   const key = `mapping:google:${googleId}`;
-  const result = await redisCommand('get', key);
+  const result = await redisCommand("get", key);
   return result ? JSON.parse(result.result) : null;
 }
 
 export async function mapGoogleIdToPsid(googleId, psid) {
   const key = `mapping:google:${googleId}`;
-  await redisCommand('set', key, JSON.stringify({ psid }));
+  await redisCommand("set", key, JSON.stringify({ psid }));
 }
 
 // এই নতুন ফাংশনটি চেক করবে PSID আগে থেকেই ম্যাপ করা আছে কি না
 export async function isPsidMapped(psid) {
-    const key = `mapping:psid:${psid}`;
-    const result = await redisCommand('get', key);
-    return result && result.result; // যদি কোনো গুগল আইডি পাওয়া যায়
+  const key = `mapping:psid:${psid}`;
+  const result = await redisCommand("get", key);
+  return result && result.result; // যদি কোনো গুগল আইডি পাওয়া যায়
 }
 
 // ---- রিমাইন্ডার ট্র্যাকিং ফাংশন ----
 export async function reminderAlreadySent(assignmentId, googleId, hours) {
   const key = `reminder:${assignmentId}:${googleId}`;
-  const result = await redisCommand('get', key);
+  const result = await redisCommand("get", key);
   const recordString = result ? result.result : null;
-  const record = recordString ? JSON.parse(recordString) : { remindersSent: [] };
+  const record = recordString
+    ? JSON.parse(recordString)
+    : { remindersSent: [] };
   return record.remindersSent.includes(hours);
 }
 
 export async function markReminderSent(assignmentId, googleId, hours) {
   const key = `reminder:${assignmentId}:${googleId}`;
-  const result = await redisCommand('get', key);
+  const result = await redisCommand("get", key);
   const recordString = result ? result.result : null;
   let record = recordString ? JSON.parse(recordString) : { remindersSent: [] };
   if (!record.remindersSent.includes(hours)) {
     record.remindersSent.push(hours);
   }
-  await redisCommand('set', key, JSON.stringify(record));
+  await redisCommand("set", key, JSON.stringify(record));
 }
 
 // ---- নতুন পোস্ট ট্র্যাকিং ফাংশন ----
 export async function getLastCheckedPostTime(courseId) {
-    const key = `lastpost:${courseId}`;
-    const result = await redisCommand('get', key);
-    return result ? result.result : null;
+  const key = `lastpost:${courseId}`;
+  const result = await redisCommand("get", key);
+  return result ? result.result : null;
 }
 
 export async function setLastCheckedPostTime(courseId, time) {
-    const key = `lastpost:${courseId}`;
-    await redisCommand('set', key, time);
+  const key = `lastpost:${courseId}`;
+  await redisCommand("set", key, time);
+}
+
+export async function getLastCheckedTime(courseId) {
+  const key = `lastpost:${courseId}`;
+  const result = await redisCommand("get", key);
+  return result ? result.result : null;
+}
+
+export async function setLastCheckedTime(courseId, time) {
+  const key = `lastpost:${courseId}`;
+  await redisCommand("set", key, time);
 }
