@@ -31,7 +31,6 @@ function createOAuth2ClientForUser(refreshToken) {
 function formatDueDateTime(dueDate, dueTime) {
   if (!dueDate) return "End of day";
 
-  // সময় ঠিক রাখতে আগের logic অনুযায়ী
   let hours = (dueTime?.hours || 23) + 6; // UTC to BDT
   const minutes = dueTime?.minutes || 0;
   const ampm = hours >= 12 ? "PM" : "AM";
@@ -62,14 +61,22 @@ async function checkNewContent(oauth2Client, googleId, courses) {
     if (allContent.length === 0) continue;
     const latestContentTime = allContent[0].updateTime;
 
+    // ✅ প্রথমবারেও latest announcements/materials পাঠানো হবে
     if (!lastCheckedString) {
-      await setLastCheckedTime(course.id, latestContentTime);
       console.log(
-        `[Cron] First run for course ${course.name}. Initializing last checked time.`
+        `[Cron] First run for course ${course.name}. Sending latest content.`
       );
+      for (const content of allContent) {
+        const message = content.title
+          ? `📚 New Material in ${course.name}:\n"${content.title}"`
+          : `📢 New Announcement in ${course.name}:\n"${content.text}"`;
+        await sendMessageToGoogleUser(googleId, message);
+      }
+      await setLastCheckedTime(course.id, latestContentTime);
       continue;
     }
 
+    // ✅ পরেরবার শুধু নতুন কন্টেন্ট পাঠাবে
     for (const content of allContent) {
       if (new Date(content.updateTime) > new Date(lastCheckedString)) {
         console.log(
@@ -147,4 +154,3 @@ export async function runCronJobs() {
     await checkNewContent(userOAuthClient, googleId, courses);
   }
 }
-//update
