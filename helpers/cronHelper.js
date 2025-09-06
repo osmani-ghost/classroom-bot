@@ -88,7 +88,7 @@ async function checkNewContent(oauth2Client, googleId, courses) {
     // Normal run → only new content
     for (const content of allContent) {
       console.log(`[Cron][DEBUG] Comparing content.updateTime=${content.updateTime} > lastChecked=${lastCheckedString}`);
-      if (new Date(content.updateTime) > new Date(lastCheckedString)) {
+      if (new Date(content.updateTime) >= new Date(lastCheckedString)) {
         const message = content.title
           ? `📚 New Material in ${course.name}:\n"${content.title}"`
           : `📢 New Announcement in ${course.name}:\n"${content.text}"`;
