@@ -35,18 +35,31 @@ function createOAuth2ClientForUser(refreshToken) {
 function formatDueDateTime(dueDate, dueTime) {
   if (!dueDate) return "End of day";
 
-  let hours = (dueTime?.hours || 23) + 6; // UTC → BDT
-  const minutes = dueTime?.minutes || 0;
+  // UTC date object
+  const utcDate = new Date(Date.UTC(
+    dueDate.year,
+    dueDate.month - 1,
+    dueDate.day,
+    dueTime?.hours || 23,
+    dueTime?.minutes || 0
+  ));
+
+  // Convert to BDT (+6)
+  utcDate.setHours(utcDate.getHours() + 6);
+
+  // Extract date & time
+  const day = utcDate.getDate().toString().padStart(2, "0");
+  const month = (utcDate.getMonth() + 1).toString().padStart(2, "0");
+  const year = utcDate.getFullYear();
+
+  let hours = utcDate.getHours();
+  const minutes = utcDate.getMinutes().toString().padStart(2, "0");
   const ampm = hours >= 12 ? "PM" : "AM";
   hours = hours % 12 || 12;
-  const minutesStr = minutes < 10 ? "0" + minutes : minutes;
 
-  const dateStr = `${dueDate.day.toString().padStart(2, "0")}-${dueDate.month
-    .toString()
-    .padStart(2, "0")}-${dueDate.year}`;
-
-  return `${dateStr}, ${hours}:${minutesStr} ${ampm}`;
+  return `${day}-${month}-${year}, ${hours}:${minutes} ${ampm}`;
 }
+
 
 // =========================
 // Check new content (Announcements & Materials)
