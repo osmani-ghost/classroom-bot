@@ -35,17 +35,27 @@ function createOAuth2ClientForUser(refreshToken) {
 function formatDueDateTime(dueDate, dueTime) {
   if (!dueDate) return "End of day";
 
-  let hours = (dueTime?.hours || 23) + 6; // UTC → BDT
-  const minutes = dueTime?.minutes || 0;
-  const ampm = hours >= 12 ? "PM" : "AM";
-  hours = hours % 12 || 12;
-  const minutesStr = minutes < 10 ? "0" + minutes : minutes;
+  // UTC Date object
+  let dateUTC = new Date(Date.UTC(
+    dueDate.year,
+    dueDate.month - 1,
+    dueDate.day,
+    dueTime?.hours || 23,
+    dueTime?.minutes || 0
+  ));
 
-  const dateStr = `${dueDate.day.toString().padStart(2, "0")}-${dueDate.month
-    .toString()
-    .padStart(2, "0")}-${dueDate.year}`;
+  // BDT +6
+  dateUTC.setHours(dateUTC.getHours() + 6);
 
-  return `${dateStr}, ${hours}:${minutesStr} ${ampm}`;
+  const hours = dateUTC.getHours() % 12 || 12;
+  const minutesStr = dateUTC.getMinutes().toString().padStart(2, "0");
+  const ampm = dateUTC.getHours() >= 12 ? "PM" : "AM";
+
+  const day = dateUTC.getDate().toString().padStart(2, "0");
+  const month = (dateUTC.getMonth() + 1).toString().padStart(2, "0");
+  const year = dateUTC.getFullYear();
+
+  return `${day}-${month}-${year}, ${hours}:${minutesStr} ${ampm}`;
 }
 
 // =========================
