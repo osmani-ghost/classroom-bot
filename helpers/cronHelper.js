@@ -17,7 +17,7 @@ import {
 } from "./redisHelper.js";
 
 // =========================
-// OAuth client for user
+// Create OAuth2 client for user
 // =========================
 function createOAuth2ClientForUser(refreshToken) {
   const oauth2Client = new google.auth.OAuth2(
@@ -30,57 +30,47 @@ function createOAuth2ClientForUser(refreshToken) {
 }
 
 // =========================
-// Format due date + time in AM/PM BDT
+// Format Date + Time → AM/PM BDT
 // =========================
 function formatDueDateTime(dueDate, dueTime) {
   if (!dueDate) return "End of day";
 
-  // UTC Date object
-  let dateUTC = new Date(Date.UTC(
-    dueDate.year,
-    dueDate.month - 1,
-    dueDate.day,
-    dueTime?.hours || 23,
-    dueTime?.minutes || 0
-  ));
+  let hours = (dueTime?.hours || 23) + 6; // UTC → BDT
+  const minutes = dueTime?.minutes || 0;
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12 || 12;
+  const minutesStr = minutes < 10 ? "0" + minutes : minutes;
 
-  // BDT +6
-  dateUTC.setHours(dateUTC.getHours() + 6);
+  const dateStr = `${dueDate.day.toString().padStart(2, "0")}-${dueDate.month
+    .toString()
+    .padStart(2, "0")}-${dueDate.year}`;
 
-  const hours = dateUTC.getHours() % 12 || 12;
-  const minutesStr = dateUTC.getMinutes().toString().padStart(2, "0");
-  const ampm = dateUTC.getHours() >= 12 ? "PM" : "AM";
-
-  const day = dateUTC.getDate().toString().padStart(2, "0");
-  const month = (dateUTC.getMonth() + 1).toString().padStart(2, "0");
-  const year = dateUTC.getFullYear();
-
-  return `${day}-${month}-${year}, ${hours}:${minutesStr} ${ampm}`;
+  return `${dateStr}, ${hours}:${minutesStr} ${ampm}`;
 }
 
 // =========================
-// Check new content (Announcements/Materials)
+// Check new content (Announcements & Materials)
 // =========================
 async function checkNewContent(oauth2Client, googleId, courses) {
   console.log(`[Cron] Checking new content for user: ${googleId}`);
+
   for (const course of courses) {
     if (course.ownerId === googleId) {
       console.log(`[Cron][DEBUG] Skipping teacher course: ${course.name}`);
-      continue;
+      continue; // skip teacher
     }
 
     const lastCheckedString = await getLastCheckedTime(course.id);
     const announcements = await fetchAnnouncements(oauth2Client, course.id);
     const materials = await fetchMaterials(oauth2Client, course.id);
-
     const allContent = [...announcements, ...materials].sort(
       (a, b) => new Date(b.updateTime) - new Date(a.updateTime)
     );
 
     if (allContent.length === 0) continue;
-
     const latestContentTime = allContent[0].updateTime;
 
+    // ===== First run → last 2 hours
     if (!lastCheckedString) {
       console.log(`[Cron][DEBUG] First run for ${course.name}, sending last 2h content...`);
       const now = new Date();
@@ -95,10 +85,10 @@ async function checkNewContent(oauth2Client, googleId, courses) {
         }
       }
       await setLastCheckedTime(course.id, new Date(latestContentTime).toISOString());
-      console.log(`[Cron][DEBUG] LastChecked set for ${course.name}: ${latestContentTime}`);
       continue;
     }
 
+    // ===== Normal run → only new content
     console.log(`[Cron][DEBUG] LastChecked for ${course.name}: ${lastCheckedString}`);
     for (const content of allContent) {
       console.log(`[Cron][DEBUG] Comparing content.updateTime=${content.updateTime} >= lastChecked=${lastCheckedString}`);
@@ -109,7 +99,7 @@ async function checkNewContent(oauth2Client, googleId, courses) {
         console.log(`[Cron][SEND] ${message}`);
         await sendMessageToGoogleUser(googleId, message);
       } else {
-        console.log(`[Cron][BREAK] No newer content found beyond this point.`);
+        console.log("[Cron][BREAK] No newer content found beyond this point.");
         break;
       }
     }
@@ -120,7 +110,7 @@ async function checkNewContent(oauth2Client, googleId, courses) {
 }
 
 // =========================
-// Check assignment reminders
+// Assignment reminders
 // =========================
 async function checkReminders(oauth2Client, googleId, courses) {
   console.log(`[Cron] Checking assignment reminders for user: ${googleId}`);
@@ -148,24 +138,20 @@ async function checkReminders(oauth2Client, googleId, courses) {
         )
       );
       const diffHours = (due.getTime() - now.getTime()) / (1000 * 60 * 60);
+
       console.log(`[Cron][DEBUG] Assignment "${a.title}" due=${due}, diffHours=${diffHours.toFixed(2)}`);
 
-      if (diffHours < 0) {
-        console.log(`[Cron][DEBUG] Assignment overdue, no reminder.`);
-        continue;
-      }
+      if (diffHours < 0 || diffHours > 24.5) continue; // ignore far past/future
 
       const turnedIn = await isTurnedIn(oauth2Client, course.id, a.id, "me");
       console.log(`[Cron][DEBUG] TurnedIn=${turnedIn}`);
       if (turnedIn) continue;
 
-      const reminders = [24, 12, 6, 2, 0]; // hours
+      const reminders = [24, 12, 6, 2]; // removed 0h
       for (const h of reminders) {
         const alreadySent = await reminderAlreadySent(a.id, googleId, `${h}h`);
         console.log(`[Cron][DEBUG] Checking reminder ${h}h: alreadySent=${alreadySent}`);
-
-        // Send reminder if within window and not sent
-        if ((diffHours <= h && !alreadySent) || (h === 0 && diffHours > 0 && !alreadySent)) {
+        if (diffHours <= h && !alreadySent) {
           const formattedTime = formatDueDateTime(a.dueDate, a.dueTime);
           const message = `📝 Reminder: Your assignment "${a.title}" is due for the course ${course.name}.\nLast submission: ${formattedTime}`;
           console.log(`[Cron][SEND] ${message}`);
@@ -188,16 +174,16 @@ export async function runCronJobs() {
 
   for (const googleId of allGoogleIds) {
     const user = await getUser(googleId);
-    if (!user || !user.refreshToken) {
-      console.log(`[Cron][DEBUG] Skipping user ${googleId}, no refreshToken`);
-      continue;
-    }
+    if (!user || !user.refreshToken) continue;
 
     console.log(`[Cron][DEBUG] User ${googleId} has ${user.courses?.length || 0} courses.`);
+
     const userOAuthClient = createOAuth2ClientForUser(user.refreshToken);
     const courses = await fetchCourses(userOAuthClient);
 
+    console.log("[Cron] =========================");
     await checkReminders(userOAuthClient, googleId, courses);
+    console.log("[Cron] =========================");
     await checkNewContent(userOAuthClient, googleId, courses);
   }
 
