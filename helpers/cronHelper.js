@@ -54,6 +54,11 @@ async function checkNewContent(oauth2Client, googleId, courses) {
     const lastCheckedString = await getLastCheckedTime(course.id);
     const announcements = await fetchAnnouncements(oauth2Client, course.id);
     const materials = await fetchMaterials(oauth2Client, course.id);
+
+    console.log(
+      `[Cron][DEBUG] Course ${course.name} -> Announcements: ${announcements.length}, Materials: ${materials.length}`
+    );
+
     const allContent = [...announcements, ...materials].sort(
       (a, b) => new Date(b.updateTime) - new Date(a.updateTime)
     );
@@ -68,11 +73,22 @@ async function checkNewContent(oauth2Client, googleId, courses) {
       );
       const now = new Date();
       for (const content of allContent) {
-        if (new Date(content.updateTime) > new Date(now.getTime() - 2 * 60 * 60 * 1000)) {
+        console.log(
+          `[Cron][DEBUG] Checking content updateTime=${content.updateTime}`
+        );
+        if (
+          new Date(content.updateTime) >
+          new Date(now.getTime() - 2 * 60 * 60 * 1000)
+        ) {
           const message = content.title
             ? `📚 New Material in ${course.name}:\n"${content.title}"`
-            : `📢 New Announcement in ${course.name}:\n"${content.text}"`;
+            : content.text
+            ? `📢 New Announcement in ${course.name}:\n"${content.text}"`
+            : `📢 New Announcement/Material in ${course.name}`;
+          console.log(`[Cron][SEND] ${message}`);
           await sendMessageToGoogleUser(googleId, message);
+        } else {
+          console.log(`[Cron][SKIP] Old content (>${2}h)`);
         }
       }
       await setLastCheckedTime(course.id, latestContentTime);
@@ -81,15 +97,19 @@ async function checkNewContent(oauth2Client, googleId, courses) {
 
     // ✅ পরেরবার → শুধু নতুন কনটেন্ট পাঠাবে
     for (const content of allContent) {
+      console.log(
+        `[Cron][DEBUG] Comparing content.updateTime=${content.updateTime} with lastChecked=${lastCheckedString}`
+      );
       if (new Date(content.updateTime) > new Date(lastCheckedString)) {
-        console.log(
-          `[Cron] ✨ New content found in ${course.name} for user ${googleId}`
-        );
         const message = content.title
           ? `📚 New Material in ${course.name}:\n"${content.title}"`
-          : `📢 New Announcement in ${course.name}:\n"${content.text}"`;
+          : content.text
+          ? `📢 New Announcement in ${course.name}:\n"${content.text}"`
+          : `📢 New Announcement/Material in ${course.name}`;
+        console.log(`[Cron][SEND] ${message}`);
         await sendMessageToGoogleUser(googleId, message);
       } else {
+        console.log(`[Cron][BREAK] No newer content found.`);
         break;
       }
     }
@@ -105,6 +125,10 @@ async function checkReminders(oauth2Client, googleId, courses) {
     if (course.ownerId === googleId) continue; // teacher skip
 
     const assignments = await fetchAssignments(oauth2Client, course.id);
+    console.log(
+      `[Cron][DEBUG] Course ${course.name} -> Assignments: ${assignments.length}`
+    );
+
     for (const a of assignments) {
       if (!a.dueDate || !a.dueTime) continue;
       const due = new Date(
@@ -118,9 +142,16 @@ async function checkReminders(oauth2Client, googleId, courses) {
       );
       const diffHours = (due.getTime() - now.getTime()) / (1000 * 60 * 60);
 
+      console.log(
+        `[Cron][DEBUG] Assignment "${a.title}" due=${due}, diffHours=${diffHours.toFixed(
+          2
+        )}`
+      );
+
       if (diffHours < 0 || diffHours > 24.5) continue;
 
       const turnedIn = await isTurnedIn(oauth2Client, course.id, a.id, "me");
+      console.log(`[Cron][DEBUG] TurnedIn=${turnedIn}`);
       if (turnedIn) continue;
 
       const reminders = [1, 2, 6, 12, 24];
@@ -131,6 +162,7 @@ async function checkReminders(oauth2Client, googleId, courses) {
         ) {
           const formattedTime = formatDueDateTime(a.dueDate, a.dueTime);
           const message = `📝 Reminder: Your assignment "${a.title}" is due for the course ${course.name}.\nLast submission: ${formattedTime}`;
+          console.log(`[Cron][SEND] ${message}`);
           await sendMessageToGoogleUser(googleId, message);
           await markReminderSent(a.id, googleId, `${h}h`);
           break;
