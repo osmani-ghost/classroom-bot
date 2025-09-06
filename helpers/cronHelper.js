@@ -61,22 +61,25 @@ async function checkNewContent(oauth2Client, googleId, courses) {
     if (allContent.length === 0) continue;
     const latestContentTime = allContent[0].updateTime;
 
-    // ✅ প্রথমবারেও latest announcements/materials পাঠানো হবে
+    // ✅ প্রথমবার হলে → শুধু শেষ 2 ঘন্টার ভেতরের কনটেন্ট পাঠাবে
     if (!lastCheckedString) {
       console.log(
-        `[Cron] First run for course ${course.name}. Sending latest content.`
+        `[Cron] First run for course ${course.name}. Sending content from last 2 hours only.`
       );
+      const now = new Date();
       for (const content of allContent) {
-        const message = content.title
-          ? `📚 New Material in ${course.name}:\n"${content.title}"`
-          : `📢 New Announcement in ${course.name}:\n"${content.text}"`;
-        await sendMessageToGoogleUser(googleId, message);
+        if (new Date(content.updateTime) > new Date(now.getTime() - 2 * 60 * 60 * 1000)) {
+          const message = content.title
+            ? `📚 New Material in ${course.name}:\n"${content.title}"`
+            : `📢 New Announcement in ${course.name}:\n"${content.text}"`;
+          await sendMessageToGoogleUser(googleId, message);
+        }
       }
       await setLastCheckedTime(course.id, latestContentTime);
       continue;
     }
 
-    // ✅ পরেরবার শুধু নতুন কন্টেন্ট পাঠাবে
+    // ✅ পরেরবার → শুধু নতুন কনটেন্ট পাঠাবে
     for (const content of allContent) {
       if (new Date(content.updateTime) > new Date(lastCheckedString)) {
         console.log(
