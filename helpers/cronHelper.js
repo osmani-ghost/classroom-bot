@@ -31,7 +31,7 @@ function createOAuth2ClientForUser(refreshToken) {
 function formatDueDateTime(dueDate, dueTime) {
   if (!dueDate) return "End of day";
 
-  let hours = (dueTime?.hours || 23) + 6; // UTC → BDT
+  let hours = (dueTime?.hours || 23) + 6; // UTC to BDT
   const minutes = dueTime?.minutes || 0;
   const ampm = hours >= 12 ? "PM" : "AM";
   hours = hours % 12;
@@ -45,21 +45,15 @@ function formatDueDateTime(dueDate, dueTime) {
   return `${dateStr}, ${hours}:${minutesStr} ${ampm}`;
 }
 
-// নতুন কনটেন্ট চেক
+// নতুন কনটেন্ট চেক করার ফাংশন
 async function checkNewContent(oauth2Client, googleId, courses) {
   console.log(`[Cron] Checking new content for user: ${googleId}`);
-
   for (const course of courses) {
     if (course.ownerId === googleId) continue; // teacher skip
 
     const lastCheckedString = await getLastCheckedTime(course.id);
     const announcements = await fetchAnnouncements(oauth2Client, course.id);
     const materials = await fetchMaterials(oauth2Client, course.id);
-
-    console.log(
-      `[Cron][DEBUG] Course ${course.name} -> Announcements: ${announcements.length}, Materials: ${materials.length}`
-    );
-
     const allContent = [...announcements, ...materials].sort(
       (a, b) => new Date(b.updateTime) - new Date(a.updateTime)
     );
@@ -67,9 +61,9 @@ async function checkNewContent(oauth2Client, googleId, courses) {
     if (allContent.length === 0) continue;
     const latestContentTime = allContent[0].updateTime;
 
-    // প্রথমবার → last 2h কন্টেন্ট পাঠাবে
+    // ✅ প্রথমবার run হলে → last 2 hours content পাঠাবে
     if (!lastCheckedString) {
-      console.log(`[Cron][DEBUG] First run for ${course.name}, sending last 2h only...`);
+      console.log(`[Cron][DEBUG] First run for ${course.name}, sending last 2h content...`);
       const now = new Date();
       for (const content of allContent) {
         const contentTime = new Date(content.updateTime);
@@ -79,22 +73,16 @@ async function checkNewContent(oauth2Client, googleId, courses) {
             : `📢 New Announcement in ${course.name}:\n"${content.text}"`;
           console.log(`[Cron][SEND] ${message}`);
           await sendMessageToGoogleUser(googleId, message);
-        } else {
-          console.log(`[Cron][SKIP] Old content skipped (${content.updateTime})`);
         }
       }
-      // save একটু পিছিয়ে, যাতে exact timestamp miss না হয়
-      await setLastCheckedTime(
-        course.id,
-        new Date(new Date(latestContentTime).getTime() - 1).toISOString()
-      );
+      await setLastCheckedTime(course.id, new Date(latestContentTime).toISOString());
       continue;
     }
 
-    // পরেরবার → শুধু নতুন কন্টেন্ট
+    // ✅ পরেরবার → শুধুমাত্র নতুন content
     for (const content of allContent) {
-      console.log(`[Cron][DEBUG] Comparing ${content.updateTime} >= ${lastCheckedString}`);
-      if (new Date(content.updateTime) >= new Date(lastCheckedString)) {
+      console.log(`[Cron][DEBUG] Comparing content.updateTime=${content.updateTime} > lastChecked=${lastCheckedString}`);
+      if (new Date(content.updateTime) > new Date(lastCheckedString)) {
         const message = content.title
           ? `📚 New Material in ${course.name}:\n"${content.title}"`
           : `📢 New Announcement in ${course.name}:\n"${content.text}"`;
@@ -106,18 +94,14 @@ async function checkNewContent(oauth2Client, googleId, courses) {
       }
     }
 
-    await setLastCheckedTime(
-      course.id,
-      new Date(new Date(latestContentTime).getTime() - 1).toISOString()
-    );
+    await setLastCheckedTime(course.id, new Date(latestContentTime).toISOString());
   }
 }
 
-// অ্যাসাইনমেন্ট রিমাইন্ডার
+// অ্যাসাইনমেন্ট রিমাইন্ডার চেক করার ফাংশন
 async function checkReminders(oauth2Client, googleId, courses) {
   console.log(`[Cron] Checking reminders for user: ${googleId}`);
   const now = new Date();
-
   for (const course of courses) {
     if (course.ownerId === googleId) continue; // teacher skip
 
@@ -138,19 +122,19 @@ async function checkReminders(oauth2Client, googleId, courses) {
       );
       const diffHours = (due.getTime() - now.getTime()) / (1000 * 60 * 60);
 
-      console.log(
-        `[Cron][DEBUG] Assignment "${a.title}" due=${due}, diffHours=${diffHours.toFixed(2)}`
-      );
+      console.log(`[Cron][DEBUG] Assignment "${a.title}" due=${due}, diffHours=${diffHours.toFixed(2)}`);
 
       if (diffHours < 0 || diffHours > 24.5) continue;
 
       const turnedIn = await isTurnedIn(oauth2Client, course.id, a.id, "me");
       console.log(`[Cron][DEBUG] TurnedIn=${turnedIn}`);
-      if (turnedIn) continue;
 
       const reminders = [1, 2, 6, 12, 24];
       for (const h of reminders) {
-        if (diffHours <= h && !(await reminderAlreadySent(a.id, googleId, `${h}h`))) {
+        if (
+          diffHours <= h &&
+          !(await reminderAlreadySent(a.id, googleId, `${h}h`))
+        ) {
           const formattedTime = formatDueDateTime(a.dueDate, a.dueTime);
           const message = `📝 Reminder: Your assignment "${a.title}" is due for the course ${course.name}.\nLast submission: ${formattedTime}`;
           console.log(`[Cron][SEND] ${message}`);
