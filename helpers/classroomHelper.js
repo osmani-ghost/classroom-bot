@@ -33,3 +33,16 @@ export async function isTurnedIn(courseId, assignmentId, studentId) {
   const submission = res.data.studentSubmissions?.[0];
   return submission?.state === "TURNED_IN";
 }
+import { google } from "googleapis";
+
+// ... (getClient ফাংশন আগের মতোই থাকবে) ...
+
+export async function fetchAnnouncements(courseId) {
+  const classroom = google.classroom({ version: "v1", auth: getClient() });
+  const res = await classroom.courses.announcements.list({
+    courseId: courseId,
+    orderBy: 'updateTime desc', // নতুন পোস্টগুলো আগে আসবে
+  });
+  return res.data.announcements || [];
+}
+// ... (বাকি fetch ফাংশনগুলো আগের মতোই থাকবে) ...
