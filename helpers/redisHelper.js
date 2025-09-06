@@ -23,15 +23,17 @@ export async function getPsidForGoogleId(googleId) {
 }
 
 export async function mapGoogleIdToPsid(googleId, psid) {
-  const key = `mapping:google:${googleId}`;
-  await redisCommand("set", key, JSON.stringify({ psid }));
+  const googleKey = `mapping:google:${googleId}`;
+  await redisCommand("set", googleKey, JSON.stringify({ psid }));
+  const psidKey = `mapping:psid:${psid}`;
+  await redisCommand("set", psidKey, JSON.stringify({ googleId }));
+  console.log(`✅ Mapping saved: Google ID ${googleId} <-> PSID ${psid}`);
 }
 
-// এই নতুন ফাংশনটি চেক করবে PSID আগে থেকেই ম্যাপ করা আছে কি না
 export async function isPsidMapped(psid) {
-  const key = `mapping:psid:${psid}`;
-  const result = await redisCommand("get", key);
-  return result && result.result; // যদি কোনো গুগল আইডি পাওয়া যায়
+    const key = `mapping:psid:${psid}`;
+    const result = await redisCommand('get', key);
+    return !!(result && result.result);
 }
 
 // ---- রিমাইন্ডার ট্র্যাকিং ফাংশন ----
@@ -39,9 +41,7 @@ export async function reminderAlreadySent(assignmentId, googleId, hours) {
   const key = `reminder:${assignmentId}:${googleId}`;
   const result = await redisCommand("get", key);
   const recordString = result ? result.result : null;
-  const record = recordString
-    ? JSON.parse(recordString)
-    : { remindersSent: [] };
+  const record = recordString ? JSON.parse(recordString) : { remindersSent: [] };
   return record.remindersSent.includes(hours);
 }
 
@@ -57,17 +57,6 @@ export async function markReminderSent(assignmentId, googleId, hours) {
 }
 
 // ---- নতুন পোস্ট ট্র্যাকিং ফাংশন ----
-export async function getLastCheckedPostTime(courseId) {
-  const key = `lastpost:${courseId}`;
-  const result = await redisCommand("get", key);
-  return result ? result.result : null;
-}
-
-export async function setLastCheckedPostTime(courseId, time) {
-  const key = `lastpost:${courseId}`;
-  await redisCommand("set", key, time);
-}
-
 export async function getLastCheckedTime(courseId) {
   const key = `lastpost:${courseId}`;
   const result = await redisCommand("get", key);
