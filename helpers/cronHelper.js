@@ -60,7 +60,6 @@ function formatDueDateTime(dueDate, dueTime) {
   return `${day}-${month}-${year}, ${hours}:${minutes} ${ampm}`;
 }
 
-
 // =========================
 // Check new content (Announcements & Materials)
 // =========================
@@ -104,8 +103,8 @@ async function checkNewContent(oauth2Client, googleId, courses) {
     // ===== Normal run → only new content
     console.log(`[Cron][DEBUG] LastChecked for ${course.name}: ${lastCheckedString}`);
     for (const content of allContent) {
-      console.log(`[Cron][DEBUG] Comparing content.updateTime=${content.updateTime} >= lastChecked=${lastCheckedString}`);
-      if (new Date(content.updateTime) > new Date(lastCheckedString)) {
+      const contentTime = new Date(content.updateTime);
+      if (contentTime > new Date(lastCheckedString)) {
         const message = content.title
           ? `📚 New Material in ${course.name}:\n"${content.title}"`
           : `📢 New Announcement in ${course.name}:\n"${content.text}"`;
@@ -154,13 +153,13 @@ async function checkReminders(oauth2Client, googleId, courses) {
 
       console.log(`[Cron][DEBUG] Assignment "${a.title}" due=${due}, diffHours=${diffHours.toFixed(2)}`);
 
-      if (diffHours < 0 || diffHours > 24.5) continue; // ignore far past/future
+      if (diffHours <= 0 || diffHours > 24.5) continue; // ignore past/far future
 
       const turnedIn = await isTurnedIn(oauth2Client, course.id, a.id, "me");
       console.log(`[Cron][DEBUG] TurnedIn=${turnedIn}`);
       if (turnedIn) continue;
 
-      const reminders = [24, 12, 6, 2]; // removed 0h
+      const reminders = [24, 12, 6, 2]; // proper reminder windows
       for (const h of reminders) {
         const alreadySent = await reminderAlreadySent(a.id, googleId, `${h}h`);
         console.log(`[Cron][DEBUG] Checking reminder ${h}h: alreadySent=${alreadySent}`);
