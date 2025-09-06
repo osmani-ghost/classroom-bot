@@ -54,11 +54,6 @@ async function checkNewContent(oauth2Client, googleId, courses) {
     const lastCheckedString = await getLastCheckedTime(course.id);
     const announcements = await fetchAnnouncements(oauth2Client, course.id);
     const materials = await fetchMaterials(oauth2Client, course.id);
-
-    console.log(
-      `[Cron][DEBUG] Course ${course.name} -> Announcements: ${announcements.length}, Materials: ${materials.length}`
-    );
-
     const allContent = [...announcements, ...materials].sort(
       (a, b) => new Date(b.updateTime) - new Date(a.updateTime)
     );
@@ -66,56 +61,60 @@ async function checkNewContent(oauth2Client, googleId, courses) {
     if (allContent.length === 0) continue;
     const latestContentTime = allContent[0].updateTime;
 
-    // ✅ প্রথমবার হলে → শুধু শেষ 2 ঘন্টার ভেতরের কনটেন্ট পাঠাবে
+    // ✅ প্রথমবার হলে → শুধু শেষ 2 ঘন্টার কনটেন্ট পাঠাবে
     if (!lastCheckedString) {
       console.log(
-        `[Cron] First run for course ${course.name}. Sending content from last 2 hours only.`
+        `[Cron][FIRST RUN] Course=${course.name}, sending content from last 2 hours`
       );
       const now = new Date();
+      let sentSomething = false;
       for (const content of allContent) {
+        const contentTime = new Date(content.updateTime);
         console.log(
-          `[Cron][DEBUG] Checking content updateTime=${content.updateTime}`
+          `[Cron][DEBUG][FIRST RUN] content.updateTime=${contentTime.toISOString()}`
         );
-        if (
-          new Date(content.updateTime) >
-          new Date(now.getTime() - 2 * 60 * 60 * 1000)
-        ) {
+        if (contentTime > new Date(now.getTime() - 2 * 60 * 60 * 1000)) {
           const message = content.title
             ? `📚 New Material in ${course.name}:\n"${content.title}"`
-            : content.text
-            ? `📢 New Announcement in ${course.name}:\n"${content.text}"`
-            : `📢 New Announcement/Material in ${course.name}`;
-          console.log(`[Cron][SEND] ${message}`);
+            : `📢 New Announcement in ${course.name}:\n"${content.text}"`;
+          console.log(`[Cron][SEND-FIRST] ${message}`);
           await sendMessageToGoogleUser(googleId, message);
+          sentSomething = true;
         } else {
-          console.log(`[Cron][SKIP] Old content (>${2}h)`);
+          break;
         }
       }
-      await setLastCheckedTime(course.id, latestContentTime);
+      // 👉 এখানে ফিক্স: শুধু সর্বশেষ content time দিয়ে সেট করো
+      if (sentSomething) {
+        await setLastCheckedTime(course.id, latestContentTime);
+        console.log(
+          `[Cron][FIRST RUN] Updated lastCheckedTime=${latestContentTime}`
+        );
+      }
       continue;
     }
 
     // ✅ পরেরবার → শুধু নতুন কনটেন্ট পাঠাবে
     for (const content of allContent) {
+      const contentTime = new Date(content.updateTime);
       console.log(
-        `[Cron][DEBUG] Comparing content.updateTime=${content.updateTime} with lastChecked=${lastCheckedString}`
+        `[Cron][DEBUG] Comparing content.updateTime=${contentTime.toISOString()} with lastChecked=${lastCheckedString}`
       );
-      if (new Date(content.updateTime) > new Date(lastCheckedString)) {
+      if (contentTime > new Date(lastCheckedString)) {
         const message = content.title
           ? `📚 New Material in ${course.name}:\n"${content.title}"`
-          : content.text
-          ? `📢 New Announcement in ${course.name}:\n"${content.text}"`
-          : `📢 New Announcement/Material in ${course.name}`;
+          : `📢 New Announcement in ${course.name}:\n"${content.text}"`;
         console.log(`[Cron][SEND] ${message}`);
         await sendMessageToGoogleUser(googleId, message);
       } else {
-        console.log(`[Cron][BREAK] No newer content found.`);
+        console.log("[Cron][BREAK] No newer content found.");
         break;
       }
     }
     await setLastCheckedTime(course.id, latestContentTime);
   }
 }
+
 
 // অ্যাসাইনমেন্ট রিমাইন্ডার চেক করার ফাংশন
 async function checkReminders(oauth2Client, googleId, courses) {
