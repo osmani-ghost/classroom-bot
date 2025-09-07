@@ -44,8 +44,7 @@ function formatDueDateTime(dueDate, dueTime) {
       dueTime?.minutes || 0
     )
   );
-
-  utcDate.setHours(utcDate.getHours() + 6); // BDT (+6)
+  utcDate.setHours(utcDate.getHours() + 6); // UTC → BDT
 
   const day = utcDate.getDate().toString().padStart(2, "0");
   const month = (utcDate.getMonth() + 1).toString().padStart(2, "0");
@@ -57,40 +56,6 @@ function formatDueDateTime(dueDate, dueTime) {
   hours = hours % 12 || 12;
 
   return `${day}-${month}-${year}, ${hours}:${minutes} ${ampm}`;
-}
-
-// =========================
-// Format Messages (UI)
-// =========================
-function formatAssignmentMessage(course, a, formattedTime) {
-  const link = `https://classroom.google.com/c/${course.id}/a/${a.id}`;
-  return (
-    `📌 Assignment Reminder\n` +
-    `Course: ${course.name}\n` +
-    `Title: ${a.title}\n` +
-    `Due: ${formattedTime}\n` +
-    `Link: ${link}`
-  );
-}
-
-function formatAnnouncementMessage(course, ann) {
-  const link = `https://classroom.google.com/c/${course.id}/m/${ann.id}`;
-  return (
-    `📢 New Announcement\n` +
-    `Course: ${course.name}\n` +
-    `Text: ${ann.text}\n` +
-    `Link: ${link}`
-  );
-}
-
-function formatMaterialMessage(course, mat) {
-  const link = `https://classroom.google.com/c/${course.id}/m/${mat.id}`;
-  return (
-    `📚 New Material\n` +
-    `Course: ${course.name}\n` +
-    `Title: ${mat.title}\n` +
-    `Link: ${link}`
-  );
 }
 
 // =========================
@@ -124,13 +89,11 @@ async function checkNewContent(oauth2Client, googleId, courses) {
       for (const content of allContent) {
         const contentTime = new Date(content.updateTime);
         if (contentTime > new Date(now.getTime() - 2 * 60 * 60 * 1000)) {
-          let message;
-          if (content.title) {
-            message = formatMaterialMessage(course, content);
-          } else {
-            message = formatAnnouncementMessage(course, content);
-          }
-          console.log(`[Cron][SEND][FIRST_RUN] ${message}`);
+          const link = content.alternateLink || "Link not available";
+          const message = content.title
+            ? `📌 Material\nCourse: ${course.name}\nTitle: ${content.title}\nLink: ${link}`
+            : `📌 Announcement\nCourse: ${course.name}\nText: ${content.text}\nLink: ${link}`;
+          console.log(`[Cron][SEND] ${message}`);
           await sendMessageToGoogleUser(googleId, message);
         }
       }
@@ -148,13 +111,11 @@ async function checkNewContent(oauth2Client, googleId, courses) {
     for (const content of allContent) {
       const contentTime = new Date(content.updateTime);
       if (contentTime > new Date(lastCheckedString)) {
-        let message;
-        if (content.title) {
-          message = formatMaterialMessage(course, content);
-        } else {
-          message = formatAnnouncementMessage(course, content);
-        }
-        console.log(`[Cron][SEND][NEW_CONTENT] ${message}`);
+        const link = content.alternateLink || "Link not available";
+        const message = content.title
+          ? `📌 Material\nCourse: ${course.name}\nTitle: ${content.title}\nLink: ${link}`
+          : `📌 Announcement\nCourse: ${course.name}\nText: ${content.text}\nLink: ${link}`;
+        console.log(`[Cron][SEND] ${message}`);
         await sendMessageToGoogleUser(googleId, message);
       } else {
         console.log("[Cron][BREAK] No newer content found beyond this point.");
@@ -205,10 +166,12 @@ async function checkReminders(oauth2Client, googleId, courses) {
       const diffHours = (due.getTime() - now.getTime()) / (1000 * 60 * 60);
 
       console.log(
-        `[Cron][DEBUG] Assignment "${a.title}" due=${due}, diffHours=${diffHours.toFixed(2)}`
+        `[Cron][DEBUG] Assignment "${
+          a.title
+        }" due=${due}, diffHours=${diffHours.toFixed(2)}`
       );
 
-      if (diffHours <= 0 || diffHours > 24.5) continue;
+      if (diffHours <= 0 || diffHours > 24.5) continue; // ignore past/far future
 
       const turnedIn = await isTurnedIn(oauth2Client, course.id, a.id, "me");
       console.log(`[Cron][DEBUG] TurnedIn=${turnedIn}`);
@@ -222,8 +185,9 @@ async function checkReminders(oauth2Client, googleId, courses) {
         );
         if (diffHours <= h && !alreadySent) {
           const formattedTime = formatDueDateTime(a.dueDate, a.dueTime);
-          const message = formatAssignmentMessage(course, a, formattedTime);
-          console.log(`[Cron][SEND][REMINDER] ${message}`);
+          const link = a.alternateLink || "Link not available";
+          const message = `📌 Assignment Reminder\nCourse: ${course.name}\nTitle: ${a.title}\nDue: ${formattedTime}\nLink: ${link}`;
+          console.log(`[Cron][SEND] ${message}`);
           await sendMessageToGoogleUser(googleId, message);
           await markReminderSent(a.id, googleId, `${h}h`);
           break;
