@@ -6,7 +6,7 @@ async function executeApiCall(apiCall) {
         return response.data || {};
     } catch (error) {
         console.error("❌ Google API Error:", error.response?.data?.error || error.message);
-        return {}; // এরর হলেও যেন অ্যাপ ক্র্যাশ না করে
+        return {};
     }
 }
 
@@ -25,9 +25,7 @@ export async function fetchAssignments(oauth2Client, courseId) {
 export async function isTurnedIn(oauth2Client, courseId, assignmentId, studentId) {
     const classroom = google.classroom({ version: "v1", auth: oauth2Client });
     const data = await executeApiCall(() => classroom.courses.courseWork.studentSubmissions.list({
-        courseId,
-        courseWorkId: assignmentId,
-        userId: studentId,
+        courseId, courseWorkId: assignmentId, userId: studentId,
     }));
     const submission = data.studentSubmissions?.[0];
     return submission?.state === "TURNED_IN";

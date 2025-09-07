@@ -1,15 +1,12 @@
 import { sendLoginButton, sendRawMessage } from "../helpers/messengerHelper.js";
 import { runCronJobs } from "../helpers/cronHelper.js";
-import { isPsidRegistered } from "../helpers/redisHelper.js";
-import { searchContent } from "../helpers/searchHelper.js";  // ✅ new helper
+import { isPsidRegistered, searchContentForUser, getUserFromPsid } from "../helpers/redisHelper.js";
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
 
-  // --- ক্রন জব ট্রিগার ---
   if (req.query.cron === "true") {
     try {
-      console.log("[Index Debug] Cron trigger received");
       await runCronJobs();
       return res.status(200).send("Cron jobs executed successfully.");
     } catch (err) {
@@ -18,19 +15,16 @@ export default async function handler(req, res) {
     }
   }
 
-  // --- ফেসবুক ওয়েবহুক ভেরিফিকেশন (GET রিকোয়েস্ট) ---
   if (req.method === "GET") {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
     if (mode === "subscribe" && token === VERIFY_TOKEN) {
-      console.log("[Index Debug] Webhook verified successfully");
       return res.status(200).send(challenge);
     }
     return res.status(403).send("Forbidden");
   }
 
-  // --- মেসেঞ্জারের মেসেজ হ্যান্ডেল করা (POST রিকোয়েস্ট) ---
   if (req.method === "POST") {
     try {
       const body = req.body;
@@ -40,31 +34,37 @@ export default async function handler(req, res) {
         for (const event of entry.messaging) {
           const senderId = event.sender?.id;
           if (!senderId) continue;
+          
+          if (event.message) {
+            const isRegistered = await isPsidRegistered(senderId);
+            if (isRegistered) {
+                const msg = event.message?.text?.trim();
+                if (msg && msg.toLowerCase().startsWith("/find ")) {
+                    const searchTerm = msg.substring(6).toLowerCase();
+                    if (!searchTerm) {
+                        await sendRawMessage(senderId, `Please provide a keyword to search. Example: /find lab`);
+                        continue;
+                    }
+                    
+                    const user = await getUserFromPsid(senderId);
+                    if (!user) continue;
+                    const results = await searchContentForUser(user.googleId, searchTerm);
 
-          if (event.message?.text) {
-            const text = event.message.text.trim();
-            console.log(`[Webhook] Received text from ${senderId}: ${text}`);
-
-            if (text.startsWith("/find")) {
-              const query = text.replace("/find", "").trim();
-              const results = await searchContent(senderId, query);
-              if (results.length > 0) {
-                for (const r of results) {
-                  await sendRawMessage(senderId, r);
+                    if (results.length > 0) {
+                        let reply = `Found ${results.length} results for "${searchTerm}":\n\n`;
+                        results.slice(0, 5).forEach(item => {
+                            reply += `-[${item.type}] ${item.title}\nLink: ${item.link || 'N/A'}\n\n`;
+                        });
+                        await sendRawMessage(senderId, reply);
+                    } else {
+                        await sendRawMessage(senderId, `Sorry, no results found for "${searchTerm}".`);
+                    }
+                } else {
+                    await sendRawMessage(senderId, `Your account is linked. Use /find <keyword> to search.`);
                 }
-              } else {
-                await sendRawMessage(senderId, "⚠️ No results found for your query.");
-              }
             } else {
-              const isRegistered = await isPsidRegistered(senderId);
-              if (isRegistered) {
-                await sendRawMessage(senderId, `Your account is already linked and active.`);
-              } else {
-                await sendLoginButton(senderId);
-              }
+              await sendLoginButton(senderId);
             }
-          } else {
-            console.log(`[Webhook] Ignoring non-message event from PSID: ${senderId}`);
           }
         }
       }
@@ -74,6 +74,4 @@ export default async function handler(req, res) {
       return res.status(500).send("Error");
     }
   }
-
-  return res.status(400).send("Invalid request method");
 }
