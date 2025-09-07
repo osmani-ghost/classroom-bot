@@ -11,12 +11,7 @@ async function sendApiRequest(payload) {
 
   const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
   try {
-    console.log(
-      `[Messenger] Sending API request payload to recipient: ${JSON.stringify(payload.recipient).substring(
-        0,
-        200
-      )}`
-    );
+    console.log(`[Messenger] Sending API request payload to recipient: ${JSON.stringify(payload.recipient).substring(0, 200)}`);
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -44,7 +39,6 @@ export async function sendRawMessage(psid, text) {
 export async function sendLoginButton(psid) {
   const domain = process.env.PUBLIC_URL || `https://${process.env.VERCEL_URL}`;
   const loginUrl = `${domain}/api/auth/google?psid=${psid}`;
-
   console.log(`[Messenger] Sending Login button to PSID ${psid} -> ${loginUrl}`);
   const payload = {
     recipient: { id: psid },
@@ -62,7 +56,7 @@ export async function sendLoginButton(psid) {
   await sendApiRequest(payload);
 }
 
-// send by googleId
+// Send message by googleId
 export async function sendMessageToGoogleUser(googleId, text) {
   console.log(`[Messenger] sendMessageToGoogleUser for googleId ${googleId}: ${text.substring(0, 200)}`);
   const user = await getUser(googleId);
