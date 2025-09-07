@@ -8,20 +8,22 @@ export default function handler(req, res) {
       process.env.GOOGLE_REDIRECT_URI
     );
     const { psid } = req.query;
-    if (!psid) return res.status(400).send("PSID is missing.");
+    if (!psid) {
+      console.error("[Google Auth] Missing PSID in query.");
+      return res.status(400).send("PSID is missing.");
+    }
 
     console.log(`[Google Auth] Generating auth URL for PSID: ${psid}`);
 
-    // --- এখানে ছাত্র এবং শিক্ষক উভয়ের জন্য সব প্রয়োজনীয় অনুমতি যোগ করা হয়েছে ---
+    // Scopes required for both students and teachers
     const scopes = [
-      "https://www.googleapis.com/auth/userinfo.profile", // প্রোফাইল তথ্য দেখার জন্য
-      "https://www.googleapis.com/auth/classroom.courses.readonly", // কোর্সের তালিকা দেখার জন্য
-      "https://www.googleapis.com/auth/classroom.rosters.readonly", // ছাত্রছাত্রীর তালিকা দেখার জন্য (শিক্ষকের জন্য)
-      "https://www.googleapis.com/auth/classroom.announcements.readonly", // ঘোষণা দেখার জন্য
-      "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly", // ম্যাটেরিয়াল দেখার জন্য
-      // --- এই দুটি অনুমতি সবচেয়ে জরুরি ---
-      "https://www.googleapis.com/auth/classroom.coursework.students.readonly", // শিক্ষকের ছাত্রছাত্রীর কাজ দেখার অনুমতি
-      "https://www.googleapis.com/auth/classroom.coursework.me.readonly", // ছাত্রের নিজের কাজ দেখার অনুমতি
+      "https://www.googleapis.com/auth/userinfo.profile",
+      "https://www.googleapis.com/auth/classroom.courses.readonly",
+      "https://www.googleapis.com/auth/classroom.rosters.readonly",
+      "https://www.googleapis.com/auth/classroom.announcements.readonly",
+      "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly",
+      "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
+      "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
     ];
 
     const authUrl = oauth2Client.generateAuthUrl({

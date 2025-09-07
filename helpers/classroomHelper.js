@@ -18,7 +18,7 @@ export async function fetchCourses(oauth2Client) {
 
 export async function fetchAssignments(oauth2Client, courseId) {
   const classroom = google.classroom({ version: "v1", auth: oauth2Client });
-  const data = await executeApiCall(() => classroom.courses.courseWork.list({ courseId, pageSize: 200 }));
+  const data = await executeApiCall(() => classroom.courses.courseWork.list({ courseId, pageSize: 500 }));
   return data.courseWork || [];
 }
 

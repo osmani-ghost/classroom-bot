@@ -48,7 +48,7 @@ export async function sendLoginButton(psid) {
         type: "template",
         payload: {
           template_type: "button",
-          text: "Welcome! Please log in with your university Google account to receive reminders and search your Classroom.",
+          text: "Welcome! Please log in with your Google account to receive reminders and search your Classroom.",
           buttons: [{ type: "web_url", url: loginUrl, title: "Login with Google" }],
         },
       },
@@ -124,7 +124,8 @@ export async function handleUserTextMessage(psid, text) {
     return;
   }
   const googleId = user.googleId;
-  // Check for shortcut commands beginning with /
+
+  // If starts with / -> shortcut
   if (text.trim().startsWith("/")) {
     const parts = text.trim().slice(1).split(/\s+/);
     const command = parts[0].toLowerCase();
@@ -137,13 +138,9 @@ export async function handleUserTextMessage(psid, text) {
     if (command === "announcements") filters.type = "announcement";
 
     if (arg) {
-      // If arg is a date like today/tomorrow/thisweek/lastweek, compute dateRange; else treat as course name
       const dateRange = parseDateKeyword(arg);
-      if (dateRange) {
-        filters.dateRange = dateRange;
-      } else {
-        filters.course = arg;
-      }
+      if (dateRange) filters.dateRange = dateRange;
+      else filters.course = arg;
     }
 
     const results = await searchIndexedItems(googleId, filters);
@@ -157,22 +154,20 @@ export async function handleUserTextMessage(psid, text) {
     return;
   }
 
-  // Natural language: extract course name (simple), type keywords, date keywords, and other keywords
+  // Natural language
   const lower = text.toLowerCase();
   const filters = {};
-  // Type
+  // Type detection
   if (lower.includes("assignment") || lower.includes("assignments") || lower.includes("due")) filters.type = "assignment";
-  if (lower.includes("material") || lower.includes("notes") || lower.includes("notes") || lower.includes("slide")) filters.type = "material";
+  if (lower.includes("material") || lower.includes("notes") || lower.includes("slide")) filters.type = "material";
   if (lower.includes("announcement") || lower.includes("notice")) filters.type = "announcement";
 
-  // Course detection: look for "physics", "math", etc. We'll try to pick the first capitalized word in original text if not found.
-  // Very naive: any word followed by "notes" or before "assignment" returned as course
+  // Course detection via known keywords or patterns
   const courseMatch = text.match(/([A-Z][a-zA-Z0-9 &\-]{2,})\s+(notes|assignment|assignments|materials|homework|hw|due)/);
   if (courseMatch) {
     filters.course = courseMatch[1];
   } else {
-    // fallback: look for explicit course name word like physics, math, chemistry
-    const known = ["physics","chemistry","math","mathematics","biology","english","history","bangla","programming","cse"];
+    const known = ["physics","chemistry","math","mathematics","biology","english","history","bangla","programming","cse","share codes","test bot","share codes"];
     for (const k of known) {
       if (lower.includes(k)) {
         filters.course = k;
@@ -185,7 +180,7 @@ export async function handleUserTextMessage(psid, text) {
   const dateRange = parseDateKeyword(text);
   if (dateRange) filters.dateRange = dateRange;
 
-  // keywords: any remaining words (remove stopwords)
+  // keywords extraction
   const keywords = extractKeywords(text);
   if (keywords.length > 0) filters.keywords = keywords;
 
@@ -197,50 +192,48 @@ export async function handleUserTextMessage(psid, text) {
     return;
   }
 
-  // Format results into neat messages, but avoid spamming many messages
   const maxToSend = 8;
   const toSend = results.slice(0, maxToSend);
   const messages = toSend.map(i => formatItemMessage(i));
   const combined = messages.join("\n\n—\n\n");
   await sendRawMessage(psid, combined);
 
-  // If we had more results, inform the user how to refine
   if (results.length > maxToSend) {
     await sendRawMessage(psid, `📎 ${results.length} results found. Showing top ${maxToSend}. Refine your query for more specific results.`);
   }
 }
 
-// Small date parser for keywords: today, tomorrow, thisweek, lastweek
+// parse date keywords and return {from: ISO, to: ISO}
 function parseDateKeyword(text) {
   const lower = text.toLowerCase();
   const now = new Date();
+  const startOfDay = date => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0);
+  const endOfDay = date => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59);
+
   if (lower.includes("today")) {
-    const from = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-    const to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+    const from = startOfDay(now);
+    const to = endOfDay(now);
     return { from: from.toISOString(), to: to.toISOString() };
   }
   if (lower.includes("tomorrow")) {
     const t = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    const from = new Date(t.getFullYear(), t.getMonth(), t.getDate(), 0, 0, 0);
-    const to = new Date(t.getFullYear(), t.getMonth(), t.getDate(), 23, 59, 59);
-    return { from: from.toISOString(), to: to.toISOString() };
+    return { from: startOfDay(t).toISOString(), to: endOfDay(t).toISOString() };
   }
   if (lower.includes("thisweek") || lower.includes("this week")) {
-    // week: Monday - Sunday (assume Monday)
+    // Monday-Sunday (assume Monday start)
     const day = now.getDay(); // 0 Sun, 1 Mon...
     const diffToMon = (day + 6) % 7;
     const mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMon);
     const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6, 23, 59, 59);
-    return { from: mon.toISOString(), to: sun.toISOString() };
+    return { from: startOfDay(mon).toISOString(), to: sun.toISOString() };
   }
   if (lower.includes("lastweek") || lower.includes("last week")) {
     const day = now.getDay();
     const diffToMon = (day + 6) % 7;
     const mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMon - 7);
     const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6, 23, 59, 59);
-    return { from: mon.toISOString(), to: sun.toISOString() };
+    return { from: startOfDay(mon).toISOString(), to: sun.toISOString() };
   }
-  // date words like "from last 7 days" or "last 7 days"
   const m = text.match(/last\s+(\d+)\s+days/);
   if (m) {
     const d = parseInt(m[1], 10);
@@ -261,13 +254,4 @@ function extractKeywords(text) {
     if (!out.includes(t)) out.push(t);
   }
   return out.slice(0, 10);
-}
-
-// Utility used by cron to format lists before sending (keeps to max items)
-export function formatListForMessenger(items, max = 6) {
-  if (!items || items.length === 0) return "No items found.";
-  const slice = items.slice(0, max);
-  const messages = slice.map(i => formatItemMessage(i));
-  const combined = messages.join("\n\n—\n\n");
-  return combined;
 }

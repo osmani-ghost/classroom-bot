@@ -15,7 +15,7 @@ async function redisCommand(command, ...args) {
   // SET: POST body
   if (command.toLowerCase() === "set") {
     const [key, value] = args;
-    console.log(`[Redis][COMMAND] SET ${key} -> ${String(value).substring(0, 500)}`);
+    console.log(`[Redis][COMMAND] SET ${key} -> ${String(value).substring(0, 800)}`);
     const response = await fetch(`${REDIS_URL}/set/${encodeURIComponent(key)}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${REDIS_TOKEN}`, "Content-Type": "application/json" },
@@ -135,8 +135,9 @@ export async function setLastAssignmentTime(courseId, time) {
 }
 
 // ------------------ Index storage & search ------------------
-// We store items under keys: index:item:{googleId}:{type}:{courseId}:{itemId}
-// Also we store a small meta key: index:items:google:{googleId} -> JSON array of keys (so we can iterate quickly)
+// Keys: index:item:{googleId}:{type}:{courseId}:{itemId}
+// Index list key: index:items:google:{googleId} -> JSON array of keys
+
 export async function saveIndexedItem(googleId, item, isMeta = false) {
   try {
     if (isMeta && item.__meta) {
@@ -146,15 +147,18 @@ export async function saveIndexedItem(googleId, item, isMeta = false) {
       return;
     }
 
-    // Ensure minimal required fields
-    const { id, type = "unknown", courseId = "unknown", title = "", createdTime = new Date().toISOString(), link = null } = item;
-    if (!id) {
-      // create synthetic id when necessary
-      item.id = `synthetic-${type}-${courseId}-${Math.random().toString(36).slice(2, 9)}`;
-    }
-    const key = `index:item:${googleId}:${type}:${courseId}:${item.id}`;
+    // normalize minimal fields
+    item = item || {};
+    const id = item.id || `synthetic-${item.type || "item"}-${Math.random().toString(36).slice(2,9)}`;
+    const type = item.type || "unknown";
+    const courseId = item.courseId || "unknown";
+    const title = item.title || (item.raw && item.raw.title) || (item.raw && item.raw.text) || "Untitled";
+    const createdTime = item.createdTime || new Date().toISOString();
+    const link = item.link || (item.raw && item.raw.alternateLink) || null;
+
+    const key = `index:item:${googleId}:${type}:${courseId}:${id}`;
     const payload = {
-      id: item.id,
+      id,
       type,
       courseId,
       courseName: item.courseName || null,
@@ -163,15 +167,15 @@ export async function saveIndexedItem(googleId, item, isMeta = false) {
       createdTime,
       dueDate: item.dueDate || null,
       dueTime: item.dueTime || null,
-      link: link || item.link || null,
-      keywords: generateKeywords(item.title || "", item.description || ""),
+      link,
+      keywords: generateKeywords(title, item.description || ""),
       raw: item.raw || null,
     };
 
     console.log(`[Redis][INDEX] Setting ${key} -> ${JSON.stringify(payload).substring(0,500)}`);
     await redisCommand("set", key, JSON.stringify(payload));
 
-    // Add to index list (array) for the user
+    // Add to user's index list
     const listKey = `index:items:google:${googleId}`;
     const existingListResp = await redisCommand("get", listKey);
     let existingList = [];
@@ -216,7 +220,13 @@ export async function getAllIndexedKeysForUser(googleId) {
   }
 }
 
-// Very basic search: filters = { course?: string, type?: string, dateRange?: { from, to }, keywords?: [] }
+/**
+ * filters:
+ *  - type: "assignment" | "material" | "announcement"
+ *  - course: substring match of course name
+ *  - dateRange: { from: ISOstring, to: ISOstring } -> will check dueDate for assignments or createdTime if dueDate missing
+ *  - keywords: array of keywords
+ */
 export async function searchIndexedItems(googleId, filters = {}) {
   console.log(`[Redis][SEARCH] Searching items for ${googleId} with filters: ${JSON.stringify(filters)}`);
   const keys = await getAllIndexedKeysForUser(googleId);
@@ -226,27 +236,36 @@ export async function searchIndexedItems(googleId, filters = {}) {
       const item = await getIndexedItemByKey(key);
       if (!item) continue;
 
-      // skip meta
-      if (item.__meta) continue;
-
       let pass = true;
+
       // type filter
       if (filters.type && filters.type.toLowerCase() !== item.type.toLowerCase()) pass = false;
 
-      // course filter (match substring case-insensitive)
+      // course filter (substring)
       if (filters.course) {
         const courseLower = (item.courseName || "").toLowerCase();
         if (!courseLower.includes(filters.course.toLowerCase())) pass = false;
       }
 
-      // date filter
+      // date filter: if type is assignment and item has dueDate -> compare dueDate; else fallback to createdTime
       if (filters.dateRange) {
-        const created = new Date(item.createdTime);
-        if (filters.dateRange.from && created < new Date(filters.dateRange.from)) pass = false;
-        if (filters.dateRange.to && created > new Date(filters.dateRange.to)) pass = false;
+        const from = new Date(filters.dateRange.from);
+        const to = new Date(filters.dateRange.to);
+        let checkDate = null;
+        if (item.dueDate && item.dueDate.year) {
+          // build UTC date using dueTime if exists (else end of day)
+          const h = item.dueTime?.hours ?? 23;
+          const m = item.dueTime?.minutes ?? 59;
+          checkDate = new Date(Date.UTC(item.dueDate.year, item.dueDate.month - 1, item.dueDate.day, h, m));
+        } else {
+          // fallback to createdTime
+          checkDate = new Date(item.createdTime);
+        }
+        // Convert to local/UTC-dependent comparison: we will compare by timestamps
+        if (!(checkDate >= from && checkDate <= to)) pass = false;
       }
 
-      // keyword filter: check item.title, description, keywords array
+      // keyword filter: check title, description, keywords
       if (filters.keywords && filters.keywords.length > 0) {
         const text = `${item.title} ${item.description} ${(item.keywords || []).join(" ")}`.toLowerCase();
         const kws = filters.keywords.map(k => k.toLowerCase());
@@ -254,9 +273,7 @@ export async function searchIndexedItems(googleId, filters = {}) {
         if (!anyMatch) pass = false;
       }
 
-      if (pass) {
-        results.push(item);
-      }
+      if (pass) results.push(item);
     } catch (e) {
       console.error("[Redis][SEARCH] Error getting item:", e);
     }
@@ -272,11 +289,12 @@ export async function searchIndexedItems(googleId, filters = {}) {
       deduped.push(r);
     }
   }
+
   console.log(`[Redis][SEARCH] Found ${deduped.length} results for ${googleId}`);
   return deduped;
 }
 
-// Very small keyword generator & auto-tagging
+// basic keyword generator
 export function generateKeywords(title = "", description = "") {
   const text = `${title} ${description}`.toLowerCase();
   const rawWords = text.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
@@ -287,10 +305,9 @@ export function generateKeywords(title = "", description = "") {
     if (stop.has(w)) continue;
     if (!keywords.includes(w)) keywords.push(w);
   }
-  // Add some domain-specific tags if present
   const autos = ["lab", "report", "midterm", "final", "project", "homework", "hw", "assignment", "quiz"];
   for (const a of autos) {
     if (text.includes(a) && !keywords.includes(a)) keywords.push(a);
   }
-  return keywords.slice(0, 30); // limit count
+  return keywords.slice(0, 30);
 }
