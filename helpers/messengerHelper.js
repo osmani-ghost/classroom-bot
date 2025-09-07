@@ -118,59 +118,6 @@ function formatDueShort(dueDate, dueTime) {
   }
 }
 
-// -------------------- SEARCH LOGIC -----------------------
-async function searchIndexedItems(googleId, filters = {}) {
-  try {
-    const rawKeys = await redisClient.get(`index:items:google:${googleId}`);
-    if (!rawKeys) return [];
-    const keys = JSON.parse(rawKeys);
-    const items = [];
-    for (const key of keys) {
-      const raw = await redisClient.get(key);
-      if (!raw) continue;
-      items.push(JSON.parse(raw));
-    }
-
-    // Filter by type
-    let results = items;
-    if (filters.type) results = results.filter(i => i.type === filters.type);
-    // Filter by course name (case-insensitive)
-    if (filters.course) {
-      const c = filters.course.toLowerCase();
-      results = results.filter(i => i.courseName.toLowerCase().includes(c));
-    }
-    // Filter by date range
-    if (filters.dateRange) {
-      const from = new Date(filters.dateRange.from).getTime();
-      const to = new Date(filters.dateRange.to).getTime();
-      results = results.filter(i => {
-        if (!i.dueDate) return false;
-        const d = new Date(i.dueDate.year, i.dueDate.month - 1, i.dueDate.day).getTime();
-        return d >= from && d <= to;
-      });
-    }
-    // Filter by keywords
-    if (filters.keywords && filters.keywords.length > 0) {
-      results = results.filter(i => {
-        const text = ((i.title || "") + " " + (i.description || "")).toLowerCase();
-        return filters.keywords.every(k => text.includes(k));
-      });
-    }
-
-    // Sort by due date ascending
-    results.sort((a, b) => {
-      const da = a.dueDate ? new Date(a.dueDate.year, a.dueDate.month - 1, a.dueDate.day) : new Date();
-      const db = b.dueDate ? new Date(b.dueDate.year, b.dueDate.month - 1, b.dueDate.day) : new Date();
-      return da - db;
-    });
-
-    return results;
-  } catch (err) {
-    console.error("[SEARCH ERROR]", err);
-    return [];
-  }
-}
-
 // -------------------- USER MESSAGE HANDLER -----------------
 export async function handleUserTextMessage(psid, text) {
   console.log(`[Messenger] handleUserTextMessage from ${psid}: "${text}"`);
