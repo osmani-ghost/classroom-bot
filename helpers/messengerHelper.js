@@ -5,29 +5,21 @@ import { getUserByPsid, getUser, searchIndexedItems } from "./redisHelper.js";
 async function sendApiRequest(payload) {
   const PAGE_ACCESS_TOKEN = process.env.MESSENGER_PAGE_ACCESS_TOKEN;
   if (!PAGE_ACCESS_TOKEN) {
-    console.error("❌ PAGE_ACCESS_TOKEN is missing in environment variables.");
+    console.error("❌ PAGE_ACCESS_TOKEN missing in environment variables.");
     return;
   }
 
   const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
   try {
-    console.log(
-      `[Messenger] Sending API request payload to recipient: ${JSON.stringify(payload.recipient).substring(
-        0,
-        200
-      )}`
-    );
+    console.log(`[Messenger] API request payload: ${JSON.stringify(payload, null, 2)}`);
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     const result = await response.json();
-    if (result.error) {
-      console.error("[Messenger] API Error:", result.error);
-    } else {
-      console.log("[Messenger] API Response:", JSON.stringify(result).substring(0, 500));
-    }
+    if (result.error) console.error("[Messenger] API Error:", result.error);
+    else console.log("[Messenger] API Response:", JSON.stringify(result, null, 2));
   } catch (error) {
     console.error("❌ Failed to send message:", error);
   }
@@ -35,7 +27,7 @@ async function sendApiRequest(payload) {
 
 // Send plain text
 export async function sendRawMessage(psid, text) {
-  console.log(`[Messenger] sendRawMessage to ${psid}: ${text.substring(0, 400)}`);
+  console.log(`[Messenger] sendRawMessage to ${psid}: ${text}`);
   const payload = { recipient: { id: psid }, message: { text } };
   await sendApiRequest(payload);
 }
@@ -62,9 +54,9 @@ export async function sendLoginButton(psid) {
   await sendApiRequest(payload);
 }
 
-// send by googleId
+// Send message by googleId
 export async function sendMessageToGoogleUser(googleId, text) {
-  console.log(`[Messenger] sendMessageToGoogleUser for googleId ${googleId}: ${text.substring(0, 200)}`);
+  console.log(`[Messenger] sendMessageToGoogleUser for googleId ${googleId}: ${text}`);
   const user = await getUser(googleId);
   if (!user || !user.psid) {
     console.error(`⚠️ No PSID mapped for Google ID: ${googleId}. Cannot send message.`);
@@ -73,7 +65,7 @@ export async function sendMessageToGoogleUser(googleId, text) {
   await sendRawMessage(user.psid, text);
 }
 
-// Format a single item for Messenger UI (clean)
+// Format a single item for Messenger UI
 export function formatItemMessage(item) {
   const typeTitle = item.type ? `${capitalize(item.type)}` : "Item";
   const course = item.courseName || item.courseId || "Unknown course";
@@ -104,7 +96,7 @@ function formatDueShort(dueDate, dueTime) {
         dueTime?.minutes || 0
       )
     );
-    utcDate.setHours(utcDate.getHours() + 6); // to BDT (UTC+6)
+    utcDate.setHours(utcDate.getHours() + 6); // BDT
     const day = utcDate.getDate().toString().padStart(2, "0");
     const month = (utcDate.getMonth() + 1).toString().padStart(2, "0");
     const year = utcDate.getFullYear();
@@ -114,15 +106,18 @@ function formatDueShort(dueDate, dueTime) {
     hours = hours % 12 || 12;
     return `${day}-${month}-${year}, ${hours}:${minutes} ${ampm}`;
   } catch (e) {
+    console.error("[formatDueShort] Error formatting dueDate:", dueDate, e);
     return "Unknown";
   }
 }
 
 // -------------------- USER MESSAGE HANDLER -----------------
 export async function handleUserTextMessage(psid, text) {
-  console.log(`[Messenger] handleUserTextMessage from ${psid}: "${text}"`);
+  console.log(`[Messenger] Received user message from ${psid}: "${text}"`);
+
   const user = await getUserByPsid(psid);
   if (!user) {
+    console.log("[Messenger] No user found for PSID, sending login button...");
     await sendLoginButton(psid);
     return;
   }
@@ -130,45 +125,62 @@ export async function handleUserTextMessage(psid, text) {
 
   let filters = {};
   const lower = text.toLowerCase();
+  console.log(`[Messenger] Lowercased text: "${lower}"`);
 
   // Command shortcut
   if (text.startsWith("/")) {
     const parts = text.slice(1).split(/\s+/);
     const command = parts[0].toLowerCase();
     const arg = parts.slice(1).join(" ");
+    console.log(`[Messenger] Parsed command: ${command}, arg: ${arg}`);
+
     if (command === "assignments") filters.type = "assignment";
     if (command === "materials") filters.type = "material";
     if (command === "announcements") filters.type = "announcement";
 
     if (arg) {
       const dateRange = parseDateKeyword(arg);
-      if (dateRange) filters.dateRange = dateRange;
-      else filters.course = arg;
+      if (dateRange) {
+        console.log(`[Messenger] Detected dateRange from command arg:`, dateRange);
+        filters.dateRange = dateRange;
+      } else {
+        filters.course = arg;
+        console.log(`[Messenger] Using course filter from command arg: ${arg}`);
+      }
     }
   } else {
-    // natural language
+    console.log("[Messenger] Processing natural language message...");
+
     if (lower.includes("assignment") || lower.includes("due")) filters.type = "assignment";
     if (lower.includes("material") || lower.includes("notes") || lower.includes("slide")) filters.type = "material";
     if (lower.includes("announcement") || lower.includes("notice")) filters.type = "announcement";
 
-    // course detection
-    const known = ["share codes","test bot"];
-    for (const k of known) {
+    const knownCourses = ["share codes","test bot"];
+    for (const k of knownCourses) {
       if (lower.includes(k)) {
         filters.course = k;
+        console.log(`[Messenger] Detected course from known courses: ${k}`);
         break;
       }
     }
 
     const dateRange = parseDateKeyword(text);
-    if (dateRange) filters.dateRange = dateRange;
+    if (dateRange) {
+      console.log(`[Messenger] Detected dateRange from natural language:`, dateRange);
+      filters.dateRange = dateRange;
+    }
 
     const keywords = extractKeywords(text);
-    if (keywords.length > 0) filters.keywords = keywords;
+    if (keywords.length > 0) {
+      console.log(`[Messenger] Extracted keywords: ${keywords}`);
+      filters.keywords = keywords;
+    }
   }
 
-  console.log(`[Messenger] Parsed filters: ${JSON.stringify(filters)}`);
-  const results = await searchIndexedItems(googleId, filters, true); // <-- pass new flag for dueDate object support
+  console.log(`[Messenger] Final filters to use in searchIndexedItems:`, filters);
+
+  const results = await searchIndexedItems(googleId, filters, true);
+  console.log(`[Messenger] Found ${results?.length || 0} results for googleId ${googleId}`);
 
   if (!results || results.length === 0) {
     await sendRawMessage(psid, `🔍 No results found. Try different keywords or use /assignments today`);
@@ -178,6 +190,7 @@ export async function handleUserTextMessage(psid, text) {
   const maxToSend = 8;
   const toSend = results.slice(0, maxToSend);
   const messages = toSend.map(i => formatItemMessage(i));
+  console.log(`[Messenger] Sending ${toSend.length} formatted items to user`);
   await sendRawMessage(psid, messages.join("\n\n—\n\n"));
 
   if (results.length > maxToSend) {
@@ -193,12 +206,18 @@ function parseDateKeyword(text) {
   const endOfDay = date => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59);
 
   if (lower.includes("today")) {
-    return { from: startOfDay(now).toISOString(), to: endOfDay(now).toISOString() };
+    const r = { from: startOfDay(now).toISOString(), to: endOfDay(now).toISOString() };
+    console.log("[parseDateKeyword] Detected 'today':", r);
+    return r;
   }
   if (lower.includes("tomorrow")) {
     const t = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    return { from: startOfDay(t).toISOString(), to: endOfDay(t).toISOString() };
+    const r = { from: startOfDay(t).toISOString(), to: endOfDay(t).toISOString() };
+    console.log("[parseDateKeyword] Detected 'tomorrow':", r);
+    return r;
   }
+
+  console.log("[parseDateKeyword] No date keyword detected");
   return null;
 }
 
@@ -212,5 +231,6 @@ function extractKeywords(text) {
     if (stop.has(t)) continue;
     if (!out.includes(t)) out.push(t);
   }
+  console.log("[extractKeywords] Extracted keywords:", out);
   return out.slice(0, 10);
 }
