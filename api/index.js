@@ -1,22 +1,16 @@
-import { sendLoginButton, sendRawMessage } from "../helpers/messengerHelper.js";
-import { runCronJobs } from "../helpers/cronHelper.js";
-import { isPsidRegistered } from "../helpers/redisHelper.js";
+import { sendLoginButton, sendRawMessage } from "../../helpers/messengerHelper.js";
+import { runCronJobs } from "../../helpers/cronHelper.js";
+import { isPsidRegistered } from "../../helpers/redisHelper.js";
+import { searchContent } from "../../helpers/searchHelper.js";
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
 
-  // --- ক্রন জব ট্রিগার ---
   if (req.query.cron === "true") {
-    try {
-      await runCronJobs();
-      return res.status(200).send("Cron jobs executed successfully.");
-    } catch (err) {
-      console.error("❌ Cron jobs failed:", err);
-      return res.status(500).send("Cron jobs error");
-    }
+    await runCronJobs();
+    return res.status(200).send("Cron jobs executed.");
   }
 
-  // --- ফেসবুক ওয়েবহুক ভেরিফিকেশন (GET রিকোয়েস্ট) ---
   if (req.method === "GET") {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
@@ -27,40 +21,55 @@ export default async function handler(req, res) {
     return res.status(403).send("Forbidden");
   }
 
-  // --- মেসেঞ্জারের মেসেজ হ্যান্ডেল করা (POST রিকোয়েস্ট) ---
   if (req.method === "POST") {
-    try {
-      const body = req.body;
-      if (!body || body.object !== "page") return res.status(400).send("Invalid request");
+    const body = req.body;
+    if (!body || body.object !== "page") return res.status(400).send("Invalid request");
 
-      for (const entry of body.entry) {
-        for (const event of entry.messaging) {
-          const senderId = event.sender?.id;
-          if (!senderId) continue;
-          
-          // --- এটাই মূল সমাধান ---
-          // শুধুমাত্র আসল মেসেজের উত্তর দেওয়া হবে, প্রতিধ্বনি বা অন্য কিছু নয়
-          if (event.message) {
-            console.log(`[Webhook] Received a message event from PSID: ${senderId}`);
-            
-            const isRegistered = await isPsidRegistered(senderId);
-            if (isRegistered) {
-              await sendRawMessage(senderId, `Your account is already linked and active.`);
+    for (const entry of body.entry) {
+      for (const event of entry.messaging) {
+        const senderId = event.sender?.id;
+        if (!senderId) continue;
+
+        if (event.message?.text) {
+          const text = event.message.text.trim();
+          console.log(`[Webhook] Message from ${senderId}: ${text}`);
+
+          const isRegistered = await isPsidRegistered(senderId);
+          if (!isRegistered) {
+            await sendLoginButton(senderId);
+            continue;
+          }
+
+          if (text.startsWith("/find")) {
+            const query = text.replace("/find", "").trim();
+            if (!query) {
+              await sendRawMessage(senderId, "❌ Please provide search keywords, e.g. `/find physics`");
+              continue;
+            }
+
+            const results = await searchContent(query);
+            if (results.length === 0) {
+              await sendRawMessage(senderId, "😥 No results found.");
             } else {
-              await sendLoginButton(senderId);
+              for (const item of results) {
+                if (item.type === "assignment") {
+                  const due = item.dueDate ? `${item.dueDate.day}-${item.dueDate.month}-${item.dueDate.year}` : "No due date";
+                  const message = `📌 Assignment Reminder\nCourse: ${item.courseName}\nTitle: ${item.title}\nDue: ${due}\nLink: ${item.link}`;
+                  await sendRawMessage(senderId, message);
+                } else {
+                  const message = `📌 ${item.type === "material" ? "Material" : "Announcement"}\nCourse: ${item.courseName}\nTitle: ${item.title}\nLink: ${item.link}`;
+                  await sendRawMessage(senderId, message);
+                }
+              }
             }
           } else {
-            // অন্য সব ইভেন্ট (যেমন: ডেলিভারি, ইকো) উপেক্ষা করা হবে
-            console.log(`[Webhook] Ignoring non-message event from PSID: ${senderId}`);
+            await sendRawMessage(senderId, `Your account is already linked and active.`);
           }
         }
       }
-      return res.status(200).send("EVENT_RECEIVED");
-    } catch (err) {
-      console.error("❌ Error handling message:", err);
-      return res.status(500).send("Error");
     }
+    return res.status(200).send("EVENT_RECEIVED");
   }
 
-  return res.status(400).send("Invalid request method");
+  return res.status(400).send("Invalid request");
 }
