@@ -30,7 +30,7 @@ async function sendApiRequest(payload) {
 
 // Send plain text
 export async function sendRawMessage(psid, text) {
-  console.log(`[Messenger] sendRawMessage to PSID ${psid}: ${text.substring(0, 400)}`);
+  console.log(`[Messenger] sendRawMessage to ${psid}: ${text.substring(0, 400)}`);
   const payload = { recipient: { id: psid }, message: { text } };
   await sendApiRequest(payload);
 }
@@ -39,7 +39,6 @@ export async function sendRawMessage(psid, text) {
 export async function sendLoginButton(psid) {
   const domain = process.env.PUBLIC_URL || `https://${process.env.VERCEL_URL}`;
   const loginUrl = `${domain}/api/auth/google?psid=${psid}`;
-
   console.log(`[Messenger] Sending Login button to PSID ${psid} -> ${loginUrl}`);
   const payload = {
     recipient: { id: psid },
@@ -60,13 +59,9 @@ export async function sendLoginButton(psid) {
 // send by googleId
 export async function sendMessageToGoogleUser(googleId, text) {
   console.log(`[Messenger] sendMessageToGoogleUser for googleId ${googleId}: ${text.substring(0, 200)}`);
-  if (!googleId) {
-    console.error("⚠️ Google ID is undefined. Cannot send message.");
-    return;
-  }
   const user = await getUser(googleId);
   if (!user || !user.psid) {
-    console.error(`⚠️ No PSID mapped for Google ID: ${googleId}. Cannot send message.`);
+    console.warn(`⚠️ No PSID mapped for Google ID: ${googleId}. Cannot send message.`);
     return;
   }
   await sendRawMessage(user.psid, text);
@@ -120,29 +115,38 @@ function formatDueShort(dueDate, dueTime) {
 // -------------------- USER MESSAGE HANDLER -----------------
 export async function handleUserTextMessage(psid, text) {
   console.log(`[Messenger] handleUserTextMessage from PSID ${psid}: "${text}"`);
-
   const user = await getUserByPsid(psid);
 
-  if (!user || !user.googleId) {
-    console.log(`[Messenger] No Google ID found for PSID ${psid}. Sending login button.`);
+  if (!user) {
+    console.log(`[Messenger] PSID ${psid} is not linked. Sending login button.`);
     await sendLoginButton(psid);
     return;
   }
 
   const googleId = user.googleId;
-  console.log(`[Messenger] Found Google ID for PSID ${psid}: ${googleId}`);
+  if (!googleId) {
+    console.log(`[Messenger] PSID ${psid} has no Google ID mapped. Sending login button.`);
+    await sendLoginButton(psid);
+    return;
+  }
+
+  // Check if indexing is complete
+  if (!user.indexed) {
+    console.log(`[Messenger] Google ID ${googleId} is linked but indexing is not done yet.`);
+    await sendRawMessage(psid, `✅ Hi ${user.name || "user"}! Your account is linked. Indexing is in progress. Please try your search in a few seconds.`);
+    return;
+  }
+
+  console.log(`[Messenger] PSID ${psid} mapped to Google ID ${googleId}. Proceeding with search.`);
 
   let filters = {};
   const lower = text.toLowerCase();
-  console.log(`[Messenger] Lowercased text: "${lower}"`);
 
   // Command shortcut
   if (text.startsWith("/")) {
     const parts = text.slice(1).split(/\s+/);
     const command = parts[0].toLowerCase();
     const arg = parts.slice(1).join(" ");
-    console.log(`[Messenger] Command detected: ${command}, arg: "${arg}"`);
-
     if (command === "assignments") filters.type = "assignment";
     if (command === "materials") filters.type = "material";
     if (command === "announcements") filters.type = "announcement";
@@ -153,13 +157,13 @@ export async function handleUserTextMessage(psid, text) {
       else filters.course = arg;
     }
   } else {
-    console.log(`[Messenger] Processing natural language message...`);
+    // natural language
     if (lower.includes("assignment") || lower.includes("due")) filters.type = "assignment";
     if (lower.includes("material") || lower.includes("notes") || lower.includes("slide")) filters.type = "material";
     if (lower.includes("announcement") || lower.includes("notice")) filters.type = "announcement";
 
-    // course detection
-    const known = ["share codes", "test bot"];
+    // course detection (add your known course keywords here)
+    const known = ["share codes","test bot"];
     for (const k of known) {
       if (lower.includes(k)) {
         filters.course = k;
@@ -168,20 +172,13 @@ export async function handleUserTextMessage(psid, text) {
     }
 
     const dateRange = parseDateKeyword(text);
-    if (dateRange) {
-      filters.dateRange = dateRange;
-      console.log(`[Messenger] Detected dateRange from natural language:`, dateRange);
-    }
+    if (dateRange) filters.dateRange = dateRange;
 
     const keywords = extractKeywords(text);
-    if (keywords.length > 0) {
-      filters.keywords = keywords;
-      console.log(`[Messenger] Extracted keywords:`, keywords);
-    }
+    if (keywords.length > 0) filters.keywords = keywords;
   }
 
-  console.log(`[Messenger] Final filters to use in searchIndexedItems:`, filters);
-
+  console.log(`[Messenger] Final filters to use in searchIndexedItems: ${JSON.stringify(filters)}`);
   const results = await searchIndexedItems(googleId, filters);
   console.log(`[Messenger] Found ${results?.length || 0} results for googleId ${googleId}`);
 
@@ -193,7 +190,6 @@ export async function handleUserTextMessage(psid, text) {
   const maxToSend = 8;
   const toSend = results.slice(0, maxToSend);
   const messages = toSend.map(i => formatItemMessage(i));
-  console.log(`[Messenger] Sending top ${messages.length} items to PSID ${psid}`);
   await sendRawMessage(psid, messages.join("\n\n—\n\n"));
 
   if (results.length > maxToSend) {
@@ -208,9 +204,13 @@ function parseDateKeyword(text) {
   const startOfDay = date => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0);
   const endOfDay = date => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59);
 
-  if (lower.includes("today")) return { from: startOfDay(now).toISOString(), to: endOfDay(now).toISOString() };
+  if (lower.includes("today")) {
+    console.log(`[parseDateKeyword] Detected 'today': { from: '${startOfDay(now).toISOString()}', to: '${endOfDay(now).toISOString()}' }`);
+    return { from: startOfDay(now).toISOString(), to: endOfDay(now).toISOString() };
+  }
   if (lower.includes("tomorrow")) {
     const t = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    console.log(`[parseDateKeyword] Detected 'tomorrow': { from: '${startOfDay(t).toISOString()}', to: '${endOfDay(t).toISOString()}' }`);
     return { from: startOfDay(t).toISOString(), to: endOfDay(t).toISOString() };
   }
   return null;
@@ -226,5 +226,6 @@ function extractKeywords(text) {
     if (stop.has(t)) continue;
     if (!out.includes(t)) out.push(t);
   }
+  console.log(`[extractKeywords] Extracted keywords: ${out}`);
   return out.slice(0, 10);
 }
