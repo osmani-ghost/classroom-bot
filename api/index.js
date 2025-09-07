@@ -1,89 +1,73 @@
-import { sendLoginButton, sendRawMessage, handleIncomingMessage } from "../helpers/messengerHelper.js";
-import { runCronJobs } from "../helpers/cronHelper.js";
-import { isPsidRegistered } from "../helpers/redisHelper.js";
+import fetch from "node-fetch";
+
+const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+const VERIFY_TOKEN = process.env.FACEBOOK_VERIFY_TOKEN;
 
 export default async function handler(req, res) {
-  console.log("\n--- /api/index.js: ENTRY ---");
-  try {
-    const VERIFY_TOKEN = process.env.FACEBOOK_VERIFY_TOKEN;
-    // Cron trigger
-    if (req.query.cron === "true") {
-      console.log("[INDEX] Cron trigger received via query param.");
-      try {
-        await runCronJobs();
-        console.log("[INDEX] Cron jobs executed successfully.");
-        return res.status(200).send("Cron jobs executed successfully.");
-      } catch (err) {
-        console.error("❌ Cron jobs failed:", err);
-        return res.status(500).send("Cron jobs error");
-      }
-    }
+  if (req.method === "GET") {
+    // Facebook webhook verification
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
+    const challenge = req.query["hub.challenge"];
 
-    // Facebook webhook verification (GET)
-    if (req.method === "GET") {
-      console.log("[INDEX] GET webhook verification request");
-      const mode = req.query["hub.mode"];
-      const token = req.query["hub.verify_token"];
-      const challenge = req.query["hub.challenge"];
-      if (mode === "subscribe" && token === VERIFY_TOKEN) {
-        console.log("[INDEX] Webhook verified successfully.");
-        return res.status(200).send(challenge);
-      }
-      console.warn("[INDEX] Webhook verification failed.");
+    if (mode === "subscribe" && token === VERIFY_TOKEN) {
+      console.log("✅ Webhook verified");
+      return res.status(200).send(challenge);
+    } else {
+      console.warn("❌ Webhook verification failed");
       return res.status(403).send("Forbidden");
     }
+  }
 
-    // Messenger message handling (POST)
-    if (req.method === "POST") {
-      console.log("[INDEX] POST webhook event received");
-      try {
-        const body = req.body;
-        if (!body || body.object !== "page") {
-          console.warn("[INDEX] Invalid webhook body or not a page object.");
-          return res.status(400).send("Invalid request");
+  if (req.method === "POST") {
+    const body = req.body;
+
+    if (!body || body.object !== "page") {
+      return res.status(400).send("Invalid request");
+    }
+
+    for (const entry of body.entry || []) {
+      for (const event of entry.messaging || []) {
+        const senderId = event.sender?.id;
+        if (!senderId) continue;
+
+        if (event.message && !event.message.is_echo) {
+          console.log("Message received from:", senderId);
+          await sendTextMessage(senderId, "Hi! This is your bot.");
         }
-
-        for (const entry of body.entry || []) {
-          for (const event of entry.messaging || []) {
-            const senderId = event.sender?.id;
-            if (!senderId) {
-              console.log("[INDEX] Skipping event without sender id.");
-              continue;
-            }
-
-            // Only respond to real message events (ignore echo, delivery, read, postback here)
-            if (event.message && !event.message.is_echo) {
-              console.log(`[INDEX] Received a message event from PSID: ${senderId}`);
-              const isRegistered = await isPsidRegistered(senderId);
-              console.log(`[INDEX] isPsidRegistered(${senderId}) => ${isRegistered}`);
-              const text = event.message.text || "";
-
-              if (isRegistered) {
-                // Route to message handler that implements search/filter & heuristics
-                try {
-                  await handleIncomingMessage(senderId, text);
-                } catch (err) {
-                  console.error("[INDEX] Error in handleIncomingMessage:", err);
-                  await sendRawMessage(senderId, "Sorry, there was an error processing your request.");
-                }
-              } else {
-                console.log(`[INDEX] PSID ${senderId} not registered -> sending login button`);
-                await sendLoginButton(senderId);
-              }
-            } else {
-              console.log(`[INDEX] Ignoring non-message or echo event from PSID: ${senderId}`);
-            }
-          }
-        }
-        return res.status(200).send("EVENT_RECEIVED");
-      } catch (err) {
-        console.error("❌ Error handling message:", err);
-        return res.status(500).send("Error");
       }
     }
 
-    return res.status(400).send("Invalid request method");
-  } finally {
-    console.log("--- /api/index.js: EXIT ---\n");
+    return res.status(200).send("EVENT_RECEIVED");
+  }
+
+  return res.status(400).send("Invalid request method");
+}
+
+// Function to send text message to Messenger
+async function sendTextMessage(psid, text) {
+  if (!PAGE_ACCESS_TOKEN) {
+    console.error("❌ PAGE_ACCESS_TOKEN is missing in environment variables.");
+    return;
+  }
+
+  const payload = {
+    recipient: { id: psid },
+    message: { text },
+  };
+
+  const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json();
+    console.log("Messenger API result:", result);
+    return result;
+  } catch (err) {
+    console.error("❌ Failed to send message:", err);
   }
 }
