@@ -4,8 +4,12 @@ const REDIS_URL = process.env.REDIS_REST_URL;
 const REDIS_TOKEN = process.env.REDIS_REST_TOKEN;
 
 async function redisCommand(command, ...args) {
-    if (!REDIS_URL || !REDIS_TOKEN) throw new Error("Redis URL or Token is missing.");
-    
+    if (!REDIS_URL || !REDIS_TOKEN) {
+        throw new Error("Redis URL or Token is missing.");
+    }
+
+    console.log(`[Redis Debug] Command: ${command}, Args: ${args}`);
+
     if (command.toLowerCase() === 'set') {
         const [key, value] = args;
         const response = await fetch(`${REDIS_URL}/set/${key}`, {
@@ -14,33 +18,29 @@ async function redisCommand(command, ...args) {
             body: value,
         });
         if (!response.ok) throw new Error(`Redis SET command failed: ${await response.text()}`);
+        console.log(`[Redis Debug] SET ${key} -> ${value}`);
         return response.json();
     }
 
     const response = await fetch(`${REDIS_URL}/${command}/${args.join("/")}`, {
         headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
     });
+
     if (!response.ok) return { result: null };
-    return response.json();
+    const resJson = await response.json();
+    console.log(`[Redis Debug] ${command} ${args} -> ${JSON.stringify(resJson)}`);
+    return resJson;
 }
 
-// ---- ইউজার এবং ম্যাপিং ফাংশন ----
+// --- User Mapping ---
 export async function saveUser(googleId, userData) {
     await redisCommand("set", `user:google:${googleId}`, JSON.stringify(userData));
     await redisCommand("set", `user:psid:${userData.psid}`, JSON.stringify({ googleId }));
-    console.log(`[DB] User data saved: Google ID ${googleId} <-> PSID ${userData.psid}`);
 }
 
 export async function getUser(googleId) {
     const result = await redisCommand("get", `user:google:${googleId}`);
     return result ? JSON.parse(result.result) : null;
-}
-
-export async function getUserFromPsid(psid) {
-    const result = await redisCommand("get", `user:psid:${psid}`);
-    if (!result || !result.result) return null;
-    const { googleId } = JSON.parse(result.result);
-    return getUser(googleId);
 }
 
 export async function getAllUserGoogleIds() {
@@ -56,7 +56,7 @@ export async function isPsidRegistered(psid) {
     return !!(result && result.result);
 }
 
-// ---- রিমাইন্ডার এবং পোস্ট ট্র্যাকিং ----
+// --- Reminder Tracking ---
 export async function reminderAlreadySent(assignmentId, googleId, hours) {
     const key = `reminder:${assignmentId}:${googleId}`;
     const result = await redisCommand("get", key);
@@ -64,55 +64,46 @@ export async function reminderAlreadySent(assignmentId, googleId, hours) {
     const record = recordString ? JSON.parse(recordString) : { remindersSent: [] };
     return record.remindersSent.includes(hours);
 }
-  
+
 export async function markReminderSent(assignmentId, googleId, hours) {
     const key = `reminder:${assignmentId}:${googleId}`;
     const result = await redisCommand("get", key);
-    let record = result ? JSON.parse(result.result) : { remindersSent: [] };
+    const recordString = result ? result.result : null;
+    let record = recordString ? JSON.parse(recordString) : { remindersSent: [] };
     if (!record.remindersSent.includes(hours)) {
         record.remindersSent.push(hours);
     }
     await redisCommand("set", key, JSON.stringify(record));
 }
 
-export async function getLastCheckedTime(googleId, courseId) {
-    const key = `lastpost:${googleId}:${courseId}`;
+// --- Last Checked Tracking ---
+export async function getLastCheckedTime(courseId) {
+    const key = `lastpost:${courseId}`;
     const result = await redisCommand("get", key);
     return result ? result.result : null;
 }
 
-export async function setLastCheckedTime(googleId, courseId, time) {
-    const key = `lastpost:${googleId}:${courseId}`;
+export async function setLastCheckedTime(courseId, time) {
+    const key = `lastpost:${courseId}`;
     await redisCommand("set", key, time);
 }
 
-// ---- সার্চ ফিচার ----
-export async function saveContent(googleId, content) {
-    const key = `content:${googleId}:${content.id}`;
-    const contentToSave = {
-        id: content.id,
-        courseId: content.courseId,
-        title: content.title || "Announcement",
-        description: content.text || content.description || "",
-        type: content.workType || (content.text ? "ANNOUNCEMENT" : "MATERIAL"),
-        link: content.alternateLink,
-    };
-    await redisCommand("set", key, JSON.stringify(contentToSave));
+// --- Search & Filter Feature ---
+export async function saveContent(courseId, contentId, data) {
+    const key = `content:${courseId}:${contentId}`;
+    await redisCommand("set", key, JSON.stringify(data));
 }
 
-export async function searchContentForUser(googleId, searchTerm) {
-    const result = await redisCommand("keys", `content:${googleId}:*`);
-    if (!result || !Array.isArray(result.result) || result.result.length === 0) return [];
-    
-    const contentKeys = result.result;
-    if (contentKeys.length === 0) return [];
-
-    const contentResult = await redisCommand("mget", ...contentKeys);
-    if (!contentResult || !Array.isArray(contentResult.result)) return [];
-
-    const allContent = contentResult.result.map(item => item ? JSON.parse(item) : null).filter(Boolean);
-    return allContent.filter(item => 
-        (item.title?.toLowerCase().includes(searchTerm)) || 
-        (item.description?.toLowerCase().includes(searchTerm))
-    );
+export async function getAllContentForUser(googleId) {
+    const keysRes = await redisCommand("keys", "content:*");
+    const keys = keysRes?.result || [];
+    const allData = [];
+    for (const key of keys) {
+        const contentRes = await redisCommand("get", key);
+        if (contentRes?.result) {
+            const content = JSON.parse(contentRes.result);
+            if (content.googleId === googleId) allData.push(content);
+        }
+    }
+    return allData;
 }

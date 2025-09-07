@@ -1,55 +1,51 @@
 import { google } from "googleapis";
-import { saveUser, saveContent } from "../../helpers/redisHelper.js";
+import { saveUser } from "../../helpers/redisHelper.js";
 import { sendRawMessage } from "../../helpers/messengerHelper.js";
-import { fetchCourses, fetchAssignments, fetchAnnouncements, fetchMaterials } from "../../helpers/classroomHelper.js";
-
-async function performInitialSync(oauth2Client, googleId) {
-    console.log(`[Sync] Starting initial data sync for user: ${googleId}`);
-    try {
-        const courses = await fetchCourses(oauth2Client);
-        for (const course of courses) {
-            const items = [
-                ...(await fetchAssignments(oauth2Client, course.id)),
-                ...(await fetchAnnouncements(oauth2Client, course.id)),
-                ...(await fetchMaterials(oauth2Client, course.id)),
-            ];
-            for (const item of items) await saveContent(googleId, item);
-        }
-        console.log(`[Sync] Initial data sync finished for user: ${googleId}`);
-    } catch (error) {
-        console.error(`[Sync] Error during initial sync for user ${googleId}:`, error);
-    }
-}
 
 export default async function handler(req, res) {
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI
-  );
+  console.log("\n--- GOOGLE AUTH CALLBACK TRIGGERED ---");
   const { code, state } = req.query;
   const psid = state;
 
   try {
-    const { tokens } = await oauth2Client.getToken(code);
-    oauth2Client.setCredentials(tokens);
-    if (!tokens.refresh_token) throw new Error("Refresh token not received.");
+    const oauth2Client = new google.auth.OAuth2(
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_CLIENT_SECRET,
+        process.env.GOOGLE_REDIRECT_URI
+    );
+    
+    console.log(`[Callback Debug] Step 1: Received code for PSID: ${psid}`);
+    if (!code || !psid) throw new Error("Missing code or state from Google callback.");
 
+    console.log(`[Callback Debug] Step 2: Getting tokens from Google...`);
+    const { tokens } = await oauth2Client.getToken(code);
+    
+    if (tokens && tokens.refresh_token) {
+        console.log(`[Callback Debug] Step 3: SUCCESS! New Refresh Token received: ${tokens.refresh_token.substring(0, 10)}...`);
+    } else {
+        console.error("❌ CRITICAL: Refresh token was NOT provided by Google. This is a problem.");
+        throw new Error("Refresh token not received. Please REMOVE app access from your Google account and try again.");
+    }
+    oauth2Client.setCredentials(tokens);
+
+    console.log(`[Callback Debug] Step 4: Getting user info...`);
     const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
     const userInfo = await oauth2.userinfo.get();
     const googleId = userInfo.data.id;
+    console.log(`[Callback Debug] Step 5: User info received. Google ID = ${googleId}`);
 
+    console.log(`[Callback Debug] Step 6: Saving user to Redis with new refresh token...`);
     await saveUser(googleId, { psid: psid, refreshToken: tokens.refresh_token });
     
+    await sendRawMessage(psid, `✅ Thank you, ${userInfo.data.given_name}! Your account is linked.`);
     res.send("<html><body><h1>Success!</h1><p>You can close this window now.</p></body></html>");
-    
-    await sendRawMessage(psid, `✅ Thank you, ${userInfo.data.given_name}! We are now syncing your classroom data...`);
-    
-    performInitialSync(oauth2Client, googleId);
 
   } catch (err) {
-    console.error("❌ Error in Google callback:", err);
-    if(psid) await sendRawMessage(psid, `😥 Sorry, something went wrong during login.`);
+    console.error("❌❌❌ CRITICAL ERROR IN GOOGLE CALLBACK ❌❌❌");
+    console.error(err);
+    if(psid) {
+        await sendRawMessage(psid, `😥 Sorry, something went wrong during login. Please try again.`);
+    }
     res.status(500).send(`Authentication failed: ${err.message}`);
   }
 }
