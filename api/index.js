@@ -1,77 +1,89 @@
-import { sendLoginButton, sendRawMessage } from "../helpers/messengerHelper.js";
+import { sendLoginButton, sendRawMessage, handleIncomingMessage } from "../helpers/messengerHelper.js";
 import { runCronJobs } from "../helpers/cronHelper.js";
 import { isPsidRegistered } from "../helpers/redisHelper.js";
-import { handleUserTextMessage } from "../helpers/messengerHelper.js";
 
 export default async function handler(req, res) {
-  const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
-
-  // --- ক্রন জব ট্রিগার ---
-  if (req.query.cron === "true") {
-    try {
-      console.log("[API] Cron trigger received via HTTP /?cron=true");
-      await runCronJobs();
-      return res.status(200).send("Cron jobs executed successfully.");
-    } catch (err) {
-      console.error("❌ Cron jobs failed:", err);
-      return res.status(500).send("Cron jobs error");
+  console.log("\n--- /api/index.js: ENTRY ---");
+  try {
+    const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
+    // Cron trigger
+    if (req.query.cron === "true") {
+      console.log("[INDEX] Cron trigger received via query param.");
+      try {
+        await runCronJobs();
+        console.log("[INDEX] Cron jobs executed successfully.");
+        return res.status(200).send("Cron jobs executed successfully.");
+      } catch (err) {
+        console.error("❌ Cron jobs failed:", err);
+        return res.status(500).send("Cron jobs error");
+      }
     }
-  }
 
-  // --- ফেসবুক ওয়েব হুক ভেরিফিকেশন (GET) ---
-  if (req.method === "GET") {
-    const mode = req.query["hub.mode"];
-    const token = req.query["hub.verify_token"];
-    const challenge = req.query["hub.challenge"];
-    console.log(`[Webhook] GET verification attempt mode=${mode} token=${token ? "provided" : "missing"}`);
-    if (mode === "subscribe" && token === VERIFY_TOKEN) {
-      console.log("[Webhook] Verification successful. Responding with challenge.");
-      return res.status(200).send(challenge);
+    // Facebook webhook verification (GET)
+    if (req.method === "GET") {
+      console.log("[INDEX] GET webhook verification request");
+      const mode = req.query["hub.mode"];
+      const token = req.query["hub.verify_token"];
+      const challenge = req.query["hub.challenge"];
+      if (mode === "subscribe" && token === VERIFY_TOKEN) {
+        console.log("[INDEX] Webhook verified successfully.");
+        return res.status(200).send(challenge);
+      }
+      console.warn("[INDEX] Webhook verification failed.");
+      return res.status(403).send("Forbidden");
     }
-    console.warn("[Webhook] Verification failed. Forbidden.");
-    return res.status(403).send("Forbidden");
-  }
 
-  // --- মেসেঞ্জারের মেসেজ হ্যান্ডেল (POST) ---
-  if (req.method === "POST") {
-    try {
-      const body = req.body;
-      console.log("[Webhook] POST body received:", JSON.stringify(body).substring(0, 1500));
-      if (!body || body.object !== "page") return res.status(400).send("Invalid request");
+    // Messenger message handling (POST)
+    if (req.method === "POST") {
+      console.log("[INDEX] POST webhook event received");
+      try {
+        const body = req.body;
+        if (!body || body.object !== "page") {
+          console.warn("[INDEX] Invalid webhook body or not a page object.");
+          return res.status(400).send("Invalid request");
+        }
 
-      for (const entry of body.entry || []) {
-        for (const event of entry.messaging || []) {
-          const senderId = event.sender?.id;
-          if (!senderId) continue;
-
-          // If text message present
-          if (event.message && event.message.text) {
-            console.log(`[Webhook] Received text from PSID ${senderId}: "${event.message.text}"`);
-            const isRegistered = await isPsidRegistered(senderId);
-            if (isRegistered) {
-              console.log(`[Webhook] PSID ${senderId} is registered -> handling text message.`);
-              await handleUserTextMessage(senderId, event.message.text);
-            } else {
-              console.log(`[Webhook] PSID ${senderId} NOT registered -> sending login button.`);
-              await sendLoginButton(senderId);
+        for (const entry of body.entry || []) {
+          for (const event of entry.messaging || []) {
+            const senderId = event.sender?.id;
+            if (!senderId) {
+              console.log("[INDEX] Skipping event without sender id.");
+              continue;
             }
-          } else if (event.message) {
-            // Non-text message
-            console.log(`[Webhook] Received non-text message from PSID ${senderId} -> acknowledging.`);
-            await sendRawMessage(senderId, `Thanks! I only process text commands right now. Try: /assignments today or "Show assignments today".`);
-          } else {
-            // other event types (delivery, read, postback)
-            console.log(`[Webhook] Ignoring event type for PSID ${senderId}: ${Object.keys(event).join(", ")}`);
+
+            // Only respond to real message events (ignore echo, delivery, read, postback here)
+            if (event.message && !event.message.is_echo) {
+              console.log(`[INDEX] Received a message event from PSID: ${senderId}`);
+              const isRegistered = await isPsidRegistered(senderId);
+              console.log(`[INDEX] isPsidRegistered(${senderId}) => ${isRegistered}`);
+              const text = event.message.text || "";
+
+              if (isRegistered) {
+                // Route to message handler that implements search/filter & heuristics
+                try {
+                  await handleIncomingMessage(senderId, text);
+                } catch (err) {
+                  console.error("[INDEX] Error in handleIncomingMessage:", err);
+                  await sendRawMessage(senderId, "Sorry, there was an error processing your request.");
+                }
+              } else {
+                console.log(`[INDEX] PSID ${senderId} not registered -> sending login button`);
+                await sendLoginButton(senderId);
+              }
+            } else {
+              console.log(`[INDEX] Ignoring non-message or echo event from PSID: ${senderId}`);
+            }
           }
         }
+        return res.status(200).send("EVENT_RECEIVED");
+      } catch (err) {
+        console.error("❌ Error handling message:", err);
+        return res.status(500).send("Error");
       }
-
-      return res.status(200).send("EVENT_RECEIVED");
-    } catch (err) {
-      console.error("❌ Error handling webhook POST:", err);
-      return res.status(500).send("Error");
     }
-  }
 
-  return res.status(400).send("Invalid request method");
+    return res.status(400).send("Invalid request method");
+  } finally {
+    console.log("--- /api/index.js: EXIT ---\n");
+  }
 }

@@ -1,83 +1,93 @@
-// classroomHelper.js
-import { saveIndexedItem } from "./redisHelper.js"; // Correct import from redisHelper.js
+import { google } from "googleapis";
 
-// =========================
-// Index assignments for a user
-// =========================
-export async function indexAssignments(googleId, courses) {
+/* Helper to execute Google API calls safely */
+async function executeApiCall(apiCall) {
   try {
-    const indexedItems = [];
-
-    for (const course of courses) {
-      if (!course.assignments) continue;
-
-      for (const item of course.assignments) {
-        const assignment = {
-          id: item.id,
-          type: "assignment",
-          courseId: course.id,
-          courseName: course.name,
-          title: item.title || item.text || "Untitled",
-          description: item.description || item.text || "",
-          createdTime: item.creationTime,
-          dueDate: item.dueDate,
-          dueTime: item.dueTime || { hours: 0, minutes: 0 },
-          link: item.link,
-          keywords: (item.title || item.text || "").toLowerCase().split(" "),
-          raw: item,
-        };
-
-        // Save indexed item using Redis helper
-        await saveIndexedItem(googleId, assignment);
-        indexedItems.push({
-          courseId: course.id,
-          assignmentId: item.id,
-        });
-      }
-    }
-
-    console.log(`[INDEX] Indexed ${indexedItems.length} items for Google ID ${googleId}`);
-    return indexedItems;
-  } catch (err) {
-    console.error("[INDEX ERROR]", err);
-    throw err;
+    const response = await apiCall();
+    return response.data || {};
+  } catch (error) {
+    console.error("❌ Google API Error:", error.response?.data?.error || error.message);
+    return {};
   }
 }
 
-// =========================
-// Fetch assignments from Google Classroom
-// (Stub: replace with actual API call if needed)
-// =========================
-export async function fetchAssignments(oauth2Client, courseId) {
-  // Example: fetch assignments from Google Classroom API
-  // Return array of assignment objects
-  return [];
-}
-
-// =========================
-// Fetch announcements from Google Classroom
-// =========================
-export async function fetchAnnouncements(oauth2Client, courseId) {
-  return [];
-}
-
-// =========================
-// Fetch materials from Google Classroom
-// =========================
-export async function fetchMaterials(oauth2Client, courseId) {
-  return [];
-}
-
-// =========================
-// Check if assignment is turned in
-// =========================
-export async function isTurnedIn(oauth2Client, courseId, assignmentId, userId) {
-  return false; // Default: not turned in
-}
-
-// =========================
-// Fetch courses for a user
-// =========================
 export async function fetchCourses(oauth2Client) {
-  return []; // Default: empty list
+  console.log("[Classroom] fetchCourses()");
+  const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+  const data = await executeApiCall(() => classroom.courses.list({ courseStates: ["ACTIVE"] }));
+  const courses = data.courses || [];
+  console.log(`[Classroom] fetchCourses -> ${courses.length} courses`);
+  return courses;
+}
+
+export async function fetchAssignments(oauth2Client, courseId) {
+  console.log(`[Classroom] fetchAssignments(courseId=${courseId})`);
+  const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+  const data = await executeApiCall(() => classroom.courses.courseWork.list({ courseId }));
+  const cw = data.courseWork || [];
+  console.log(`[Classroom] fetchAssignments -> ${cw.length} items for course ${courseId}`);
+  return cw;
+}
+
+export async function isTurnedIn(oauth2Client, courseId, assignmentId, studentId) {
+  console.log(`[Classroom] isTurnedIn(course=${courseId}, assignment=${assignmentId}, studentId=${studentId})`);
+  const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+  const data = await executeApiCall(() =>
+    classroom.courses.courseWork.studentSubmissions.list({
+      courseId,
+      courseWorkId: assignmentId,
+      userId: studentId,
+    })
+  );
+  const submission = data.studentSubmissions?.[0];
+  const turned = submission?.state === "TURNED_IN";
+  console.log(`[Classroom] isTurnedIn => ${turned}`);
+  return turned;
+}
+
+export async function fetchAnnouncements(oauth2Client, courseId) {
+  console.log(`[Classroom] fetchAnnouncements(courseId=${courseId})`);
+  const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+  const data = await executeApiCall(() =>
+    classroom.courses.announcements.list({ courseId, orderBy: "updateTime desc" })
+  );
+  const items = data.announcements || [];
+  console.log(`[Classroom] fetchAnnouncements -> ${items.length}`);
+  return items;
+}
+
+export async function fetchMaterials(oauth2Client, courseId) {
+  console.log(`[Classroom] fetchMaterials(courseId=${courseId})`);
+  const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+  const data = await executeApiCall(() =>
+    classroom.courses.courseWorkMaterials.list({ courseId, orderBy: "updateTime desc" })
+  );
+  const items = data.courseWorkMaterial || [];
+  console.log(`[Classroom] fetchMaterials -> ${items.length}`);
+  return items;
+}
+
+/* Keyword generation utility:
+   - lowercases
+   - strips punctuation
+   - removes common English stop words
+   - returns unique array
+*/
+const STOP_WORDS = new Set([
+  "the","a","an","is","in","on","at","for","to","and","or","but","with","by","from","that","this","of","it","as","are","be","was","were","so","if","they","their","them"
+]);
+
+export function generateKeywordsFromText(text) {
+  if (!text) return [];
+  try {
+    const normalized = text.toLowerCase().replace(/[^\w\s]/g, " ");
+    const parts = normalized.split(/\s+/).filter(Boolean);
+    const filtered = parts.filter((w) => !STOP_WORDS.has(w) && w.length > 1);
+    const unique = Array.from(new Set(filtered));
+    console.log(`[Classroom] generateKeywordsFromText -> ${unique.length} keywords`);
+    return unique;
+  } catch (err) {
+    console.error("[Classroom] generateKeywordsFromText error:", err);
+    return [];
+  }
 }

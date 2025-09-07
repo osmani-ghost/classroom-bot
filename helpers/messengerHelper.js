@@ -1,17 +1,27 @@
 import fetch from "node-fetch";
-import { getUserByPsid, getUser, searchIndexedItems } from "./redisHelper.js";
+import {
+  getUser,
+  getAllItemsForPsid,
+  searchItemsForPsid,
+} from "./redisHelper.js";
 
-// --- send to Facebook Messenger API with debug logs ---
+/**
+ * NOTE on env names:
+ * Your .env contains MESSENGER_PAGE_ACCESS_TOKEN and MESSENGER_VERIFY_TOKEN.
+ * The original code referenced different names in places; we use MESSENGER_PAGE_ACCESS_TOKEN here.
+ */
+
+const PAGE_ACCESS_TOKEN = process.env.MESSENGER_PAGE_ACCESS_TOKEN || process.env.MESSENGER_PAGE_TOKEN;
+
+/* Low-level API request */
 async function sendApiRequest(payload) {
-  const PAGE_ACCESS_TOKEN = process.env.MESSENGER_PAGE_ACCESS_TOKEN;
   if (!PAGE_ACCESS_TOKEN) {
     console.error("❌ PAGE_ACCESS_TOKEN is missing in environment variables.");
     return;
   }
-
   const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
   try {
-    console.log(`[Messenger] Sending API request payload to recipient: ${JSON.stringify(payload.recipient).substring(0, 200)}`);
+    console.log(`[Messenger] Sending API request to PSID: ${payload.recipient?.id}`);
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -21,25 +31,30 @@ async function sendApiRequest(payload) {
     if (result.error) {
       console.error("[Messenger] API Error:", result.error);
     } else {
-      console.log("[Messenger] API Response:", JSON.stringify(result).substring(0, 500));
+      console.log("[Messenger] API Response:", result);
     }
+    return result;
   } catch (error) {
     console.error("❌ Failed to send message:", error);
+    throw error;
   }
 }
 
-// Send plain text
+/* Raw text message */
 export async function sendRawMessage(psid, text) {
-  console.log(`[Messenger] sendRawMessage to ${psid}: ${text.substring(0, 400)}`);
-  const payload = { recipient: { id: psid }, message: { text } };
-  await sendApiRequest(payload);
+  console.log(`[Messenger] sendRawMessage -> psid=${psid}, textPreview="${String(text).slice(0, 80)}"`);
+  const payload = {
+    recipient: { id: psid },
+    message: { text },
+  };
+  return sendApiRequest(payload);
 }
 
-// Send login button
+/* Login button */
 export async function sendLoginButton(psid) {
+  console.log(`[Messenger] sendLoginButton -> psid=${psid}`);
   const domain = process.env.PUBLIC_URL || `https://${process.env.VERCEL_URL}`;
   const loginUrl = `${domain}/api/auth/google?psid=${psid}`;
-  console.log(`[Messenger] Sending Login button to PSID ${psid} -> ${loginUrl}`);
   const payload = {
     recipient: { id: psid },
     message: {
@@ -47,185 +62,173 @@ export async function sendLoginButton(psid) {
         type: "template",
         payload: {
           template_type: "button",
-          text: "Welcome! Please log in with your Google account to receive reminders and search your Classroom.",
-          buttons: [{ type: "web_url", url: loginUrl, title: "Login with Google" }],
+          text: "Welcome! Please log in with your university Google account to receive reminders.",
+          buttons: [
+            {
+              type: "web_url",
+              url: loginUrl,
+              title: "Login with Google",
+            },
+          ],
         },
       },
     },
   };
-  await sendApiRequest(payload);
+  return sendApiRequest(payload);
 }
 
-// send by googleId
+/* Send message using Google ID mapping */
 export async function sendMessageToGoogleUser(googleId, text) {
-  console.log(`[Messenger] sendMessageToGoogleUser for googleId ${googleId}: ${text.substring(0, 200)}`);
+  console.log(`[Messenger] sendMessageToGoogleUser -> googleId=${googleId}`);
   const user = await getUser(googleId);
   if (!user || !user.psid) {
-    console.warn(`⚠️ No PSID mapped for Google ID: ${googleId}. Cannot send message.`);
+    console.error(`⚠️ No PSID mapped for Google ID: ${googleId}. Cannot send message.`);
     return;
   }
-  await sendRawMessage(user.psid, text);
+  return sendRawMessage(user.psid, text);
 }
 
-// Format a single item for Messenger UI (clean)
-export function formatItemMessage(item) {
-  const typeTitle = item.type ? `${capitalize(item.type)}` : "Item";
-  const course = item.courseName || item.courseId || "Unknown course";
-  const title = item.title || "No title";
-  const dueText = item.dueDate ? formatDueShort(item.dueDate, item.dueTime) : null;
-  const link = item.link || "Link not available";
-
-  let body = `📘 ${course}\nTitle: ${title}\nType: ${typeTitle}`;
-  if (dueText) body += `\nDeadline: ${dueText}`;
-  body += `\nLink: ${link}`;
-  return body;
+/* Helper: sleep */
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function capitalize(s) {
-  if (!s) return s;
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-function formatDueShort(dueDate, dueTime) {
+/* High-level incoming message handler
+   - Recognizes /commands and natural heuristics
+   - Calls Redis search and formats replies
+*/
+export async function handleIncomingMessage(psid, text) {
+  console.log(`[Messenger] handleIncomingMessage -> psid=${psid}, text="${text}"`);
   try {
-    if (!dueDate) return "End of day";
-    const utcDate = new Date(
-      Date.UTC(
-        dueDate.year,
-        dueDate.month - 1,
-        dueDate.day,
-        dueTime?.hours || 23,
-        dueTime?.minutes || 0
-      )
-    );
-    utcDate.setHours(utcDate.getHours() + 6); // to BDT (UTC+6)
-    const day = utcDate.getDate().toString().padStart(2, "0");
-    const month = (utcDate.getMonth() + 1).toString().padStart(2, "0");
-    const year = utcDate.getFullYear();
-    let hours = utcDate.getHours();
-    const minutes = utcDate.getMinutes().toString().padStart(2, "0");
-    const ampm = hours >= 12 ? "PM" : "AM";
-    hours = hours % 12 || 12;
-    return `${day}-${month}-${year}, ${hours}:${minutes} ${ampm}`;
-  } catch (e) {
-    return "Unknown";
-  }
-}
-
-// -------------------- USER MESSAGE HANDLER -----------------
-export async function handleUserTextMessage(psid, text) {
-  console.log(`[Messenger] handleUserTextMessage from PSID ${psid}: "${text}"`);
-  const user = await getUserByPsid(psid);
-
-  if (!user) {
-    console.log(`[Messenger] PSID ${psid} is not linked. Sending login button.`);
-    await sendLoginButton(psid);
-    return;
-  }
-
-  const googleId = user.googleId;
-  if (!googleId) {
-    console.log(`[Messenger] PSID ${psid} has no Google ID mapped. Sending login button.`);
-    await sendLoginButton(psid);
-    return;
-  }
-
-  // Check if indexing is complete
-  if (!user.indexed) {
-    console.log(`[Messenger] Google ID ${googleId} is linked but indexing is not done yet.`);
-    await sendRawMessage(psid, `✅ Hi ${user.name || "user"}! Your account is linked. Indexing is in progress. Please try your search in a few seconds.`);
-    return;
-  }
-
-  console.log(`[Messenger] PSID ${psid} mapped to Google ID ${googleId}. Proceeding with search.`);
-
-  let filters = {};
-  const lower = text.toLowerCase();
-
-  // Command shortcut
-  if (text.startsWith("/")) {
-    const parts = text.slice(1).split(/\s+/);
-    const command = parts[0].toLowerCase();
-    const arg = parts.slice(1).join(" ");
-    if (command === "assignments") filters.type = "assignment";
-    if (command === "materials") filters.type = "material";
-    if (command === "announcements") filters.type = "announcement";
-
-    if (arg) {
-      const dateRange = parseDateKeyword(arg);
-      if (dateRange) filters.dateRange = dateRange;
-      else filters.course = arg;
+    if (!text || text.trim().length === 0) {
+      console.log("[Messenger] Empty message text -> send help");
+      await sendRawMessage(psid, "Please type a command. Try: /assignments today or /materials chemistry");
+      return;
     }
-  } else {
-    // natural language
-    if (lower.includes("assignment") || lower.includes("due")) filters.type = "assignment";
-    if (lower.includes("material") || lower.includes("notes") || lower.includes("slide")) filters.type = "material";
-    if (lower.includes("announcement") || lower.includes("notice")) filters.type = "announcement";
 
-    // course detection (add your known course keywords here)
-    const known = ["share codes","test bot"];
-    for (const k of known) {
-      if (lower.includes(k)) {
-        filters.course = k;
-        break;
+    const normalized = text.trim().toLowerCase();
+    // if starts with slash -> explicit commands
+    let command = null;
+    let arg = null;
+
+    if (normalized.startsWith("/")) {
+      const parts = normalized.split(/\s+/);
+      command = parts[0]; // e.g., /assignments
+      arg = parts.slice(1).join(" ") || null;
+      console.log(`[Messenger] Detected slash command: ${command} arg="${arg}"`);
+    } else {
+      // Natural language heuristics: simple keyword matching
+      // Look for keywords for type, timeframe, or course
+      const tokens = normalized.split(/\s+/);
+      const typeHints = ["assignment", "assign", "homework", "task"];
+      const materialHints = ["material", "materials", "note", "notes", "slides"];
+      const announcementHints = ["announcement", "announce", "announcements", "notice"];
+
+      const timeframeHints = ["today", "tomorrow", "thisweek", "this week", "this-week", "thisweek"];
+      // Determine basic type
+      const tokenSet = new Set(tokens);
+      if (tokens.some((t) => typeHints.includes(t))) {
+        command = "/assignments";
+      } else if (tokens.some((t) => materialHints.includes(t))) {
+        command = "/materials";
+      } else if (tokens.some((t) => announcementHints.includes(t))) {
+        command = "/announcements";
+      } else {
+        // fallback: assume assignments search
+        command = "/assignments";
+      }
+      // Look for timeframe tokens
+      const tf = tokens.find((t) => ["today", "tomorrow", "this", "week", "thisweek", "this-week", "thisweek"].includes(t));
+      arg = tf || tokens.find((t) => t.length > 2) || null; // naive course or timeframe
+      console.log(`[Messenger] Heuristic inferred command=${command} arg=${arg}`);
+    }
+
+    // Build filters
+    const filters = { type: null, course: null, timeframe: null, raw: normalized };
+
+    // parse command into type
+    if (command === "/assignments") filters.type = "assignment";
+    if (command === "/materials") filters.type = "material";
+    if (command === "/announcements") filters.type = "announcement";
+
+    // parse arg: could be timeframe or course
+    if (arg) {
+      const a = arg.toLowerCase();
+      if (["today", "tomorrow", "thisweek", "this week", "this-week"].includes(a)) {
+        if (a.includes("today")) filters.timeframe = "today";
+        else if (a.includes("tomorrow")) filters.timeframe = "tomorrow";
+        else filters.timeframe = "thisweek";
+      } else if (["lastweek", "last week", "last-week"].includes(a)) {
+        filters.timeframe = "lastweek";
+      } else {
+        // treat as course hint or keyword
+        filters.course = a;
       }
     }
 
-    const dateRange = parseDateKeyword(text);
-    if (dateRange) filters.dateRange = dateRange;
+    console.log(`[Messenger] Filters after parsing: ${JSON.stringify(filters)}`);
 
-    const keywords = extractKeywords(text);
-    if (keywords.length > 0) filters.keywords = keywords;
-  }
+    // Query Redis
+    console.log("[Messenger] Querying Redis for items...");
+    const results = await searchItemsForPsid(psid, filters);
+    console.log(`[Messenger] searchItemsForPsid returned ${results.length} items.`);
 
-  console.log(`[Messenger] Final filters to use in searchIndexedItems: ${JSON.stringify(filters)}`);
-  const results = await searchIndexedItems(googleId, filters);
-  console.log(`[Messenger] Found ${results?.length || 0} results for googleId ${googleId}`);
+    if (!results || results.length === 0) {
+      console.log("[Messenger] No matching items found -> sending apology.");
+      await sendRawMessage(psid, "Sorry, I couldn't find anything matching your search.");
+      return;
+    }
 
-  if (!results || results.length === 0) {
-    await sendRawMessage(psid, `🔍 No results found. Try different keywords or use /assignments today`);
-    return;
-  }
+    // Format results. If <=5 results -> single message; otherwise batch.
+    const formatItem = (item) => {
+      const itemTypeLabel = item.type === "assignment" ? "Assignment" : item.type === "material" ? "Material" : "Announcement";
+      const dateLabel =
+        item.type === "assignment"
+          ? `Deadline: ${formatIsoToReadableBDT(item.dueDate)}`
+          : `Posted: ${formatIsoToReadableBDT(item.createdAt)}`;
+      const link = item.link || "Link not available";
+      return `📘 ${item.courseName} ${itemTypeLabel}\n\nTitle: ${item.title}\n${dateLabel}\nLink: ${link}`;
+    };
 
-  const maxToSend = 8;
-  const toSend = results.slice(0, maxToSend);
-  const messages = toSend.map(i => formatItemMessage(i));
-  await sendRawMessage(psid, messages.join("\n\n—\n\n"));
-
-  if (results.length > maxToSend) {
-    await sendRawMessage(psid, `📎 ${results.length} results found. Showing top ${maxToSend}. Refine your query.`);
+    // If small set, combine into single message
+    if (results.length <= 5) {
+      const combined = results.map(formatItem).join("\n\n---\n\n");
+      console.log("[Messenger] Sending combined results message (<=5 items).");
+      await sendRawMessage(psid, combined);
+    } else {
+      console.log("[Messenger] Sending results in batches to avoid spam.");
+      // batch size 5
+      for (let i = 0; i < results.length; i += 5) {
+        const batch = results.slice(i, i + 5).map(formatItem).join("\n\n---\n\n");
+        console.log(`[Messenger] Sending batch ${Math.floor(i / 5) + 1}`);
+        await sendRawMessage(psid, batch);
+        await sleep(600); // slight delay
+      }
+    }
+  } catch (err) {
+    console.error("[Messenger] Error in handleIncomingMessage:", err);
+    await sendRawMessage(psid, "Sorry, an error occurred while processing your message.");
   }
 }
 
-// parse date keywords and return {from: ISO, to: ISO}
-function parseDateKeyword(text) {
-  const lower = text.toLowerCase();
-  const now = new Date();
-  const startOfDay = date => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0);
-  const endOfDay = date => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59);
-
-  if (lower.includes("today")) {
-    console.log(`[parseDateKeyword] Detected 'today': { from: '${startOfDay(now).toISOString()}', to: '${endOfDay(now).toISOString()}' }`);
-    return { from: startOfDay(now).toISOString(), to: endOfDay(now).toISOString() };
+/* Helper: format ISO -> dd-mm-yyyy, hh:mm AM/PM in BDT (UTC+6) */
+function formatIsoToReadableBDT(iso) {
+  try {
+    if (!iso) return "N/A";
+    const d = new Date(iso);
+    // convert UTC to BDT by adding 6 hours
+    const utc = d.getTime();
+    const bdt = new Date(utc + 6 * 60 * 60 * 1000);
+    const day = String(bdt.getDate()).padStart(2, "0");
+    const month = String(bdt.getMonth() + 1).padStart(2, "0");
+    const year = bdt.getFullYear();
+    let hours = bdt.getHours();
+    const minutes = String(bdt.getMinutes()).padStart(2, "0");
+    const ampm = hours >= 12 ? "PM" : "AM";
+    hours = hours % 12 || 12;
+    return `${day}-${month}-${year}, ${hours}:${minutes} ${ampm}`;
+  } catch (err) {
+    console.error("[Messenger] formatIsoToReadableBDT error:", err);
+    return iso;
   }
-  if (lower.includes("tomorrow")) {
-    const t = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    console.log(`[parseDateKeyword] Detected 'tomorrow': { from: '${startOfDay(t).toISOString()}', to: '${endOfDay(t).toISOString()}' }`);
-    return { from: startOfDay(t).toISOString(), to: endOfDay(t).toISOString() };
-  }
-  return null;
-}
-
-function extractKeywords(text) {
-  const lower = text.toLowerCase();
-  const tokens = lower.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
-  const stop = new Set(["the","and","or","of","in","on","a","an","to","for","with","by","from","this","that","is","are","me","i","show","find","all","please","give","send","my","from","last","week","today","tomorrow"]);
-  const out = [];
-  for (const t of tokens) {
-    if (t.length <= 2) continue;
-    if (stop.has(t)) continue;
-    if (!out.includes(t)) out.push(t);
-  }
-  console.log(`[extractKeywords] Extracted keywords: ${out}`);
-  return out.slice(0, 10);
 }
