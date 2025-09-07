@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { saveUserGoogleId } from "./redisHelper.js"; // make sure you have a helper to store GoogleID
+import { saveUserGoogleId } from "../../helpers/redisHelper.js"; // ✅ correct path
 
 export default async function handler(req, res) {
   try {
@@ -16,9 +16,8 @@ export default async function handler(req, res) {
       return res.status(400).send("PSID is missing.");
     }
 
-    // If no code, this is initial login request → generate auth URL
     if (!code) {
-      const actualPsid = psid || state; // fallback
+      const actualPsid = psid || state;
       console.log(`[Google Auth] Generating auth URL for PSID: ${actualPsid}`);
 
       const scopes = [
@@ -42,24 +41,18 @@ export default async function handler(req, res) {
       return res.redirect(authUrl);
     }
 
-    // If code exists, this is callback from Google → exchange code for tokens
-    console.log(`[Google Auth] Received OAuth callback for PSID: ${state}, code: ${code}`);
-
+    console.log(`[Google Auth] OAuth callback for PSID: ${state}, code: ${code}`);
     const { tokens } = await oauth2Client.getToken(code);
     oauth2Client.setCredentials(tokens);
+    console.log(`[Google Auth] Tokens received for PSID ${state}: ${JSON.stringify(tokens).substring(0, 300)}...`);
 
-    console.log(`[Google Auth] Tokens received for PSID: ${state}: ${JSON.stringify(tokens).substring(0, 300)}...`);
-
-    // Get user profile info from Google
     const oauth2 = google.oauth2({ auth: oauth2Client, version: "v2" });
     const profile = await oauth2.userinfo.get();
     console.log(`[Google Auth] Google profile fetched for PSID ${state}: ${JSON.stringify(profile.data)}`);
 
-    // Save Google ID and refresh token in your database / Redis
     await saveUserGoogleId(state, profile.data.id, tokens.refresh_token);
     console.log(`[Google Auth] Saved Google ID ${profile.data.id} for PSID ${state}`);
 
-    // Redirect back to your UI or Messenger success page
     res.send(`
       <h2>✅ Hi ${profile.data.name || "User"}, your Google Classroom is linked!</h2>
       <p>You can now search assignments, materials, and announcements in Messenger.</p>
