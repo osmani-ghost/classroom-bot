@@ -1,5 +1,5 @@
 import fetch from "node-fetch";
-import { getUserByPsid, getUser, redisClient } from "./redisHelper.js";
+import { getUserByPsid, getUser, searchIndexedItems } from "./redisHelper.js";
 
 // --- send to Facebook Messenger API with debug logs ---
 async function sendApiRequest(payload) {
