@@ -15,6 +15,7 @@ import {
   getLastCheckedTime,
   setLastCheckedTime,
 } from "./redisHelper.js";
+import { buildClassroomLink } from "./linkHelper.js"; // ✅ NEW
 
 // =========================
 // Create OAuth2 client for user
@@ -73,11 +74,18 @@ async function checkNewContent(oauth2Client, googleId, courses) {
     const lastCheckedString = await getLastCheckedTime(course.id);
     const announcements = await fetchAnnouncements(oauth2Client, course.id);
     const materials = await fetchMaterials(oauth2Client, course.id);
-    const allContent = [...announcements, ...materials].sort(
-      (a, b) => new Date(b.updateTime) - new Date(a.updateTime)
-    );
 
-    if (allContent.length === 0) continue;
+    console.log(`[Cron][DEBUG] Course=${course.name}(${course.id}) announcements=${announcements.length}, materials=${materials.length}`);
+
+    const allContent = [
+      ...announcements.map(a => ({ ...a, __type: "announcement" })),
+      ...materials.map(m => ({ ...m, __type: "material" })),
+    ].sort((a, b) => new Date(b.updateTime) - new Date(a.updateTime));
+
+    if (allContent.length === 0) {
+      console.log(`[Cron][DEBUG] No content in ${course.name}.`);
+      continue;
+    }
     const latestContentTime = allContent[0].updateTime;
 
     // ===== First run → last 2 hours
@@ -88,11 +96,18 @@ async function checkNewContent(oauth2Client, googleId, courses) {
       const now = new Date();
       for (const content of allContent) {
         const contentTime = new Date(content.updateTime);
-        if (contentTime > new Date(now.getTime() - 2 * 60 * 60 * 1000)) {
-          const link = content.alternateLink || "Link not available";
-          const message = content.title
-            ? `📌 Material\nCourse: ${course.name}\nTitle: ${content.title}\nLink: ${link}`
-            : `📌 Announcement\nCourse: ${course.name}\nText: ${content.text}\nLink: ${link}`;
+        const inWindow = contentTime > new Date(now.getTime() - 2 * 60 * 60 * 1000);
+        console.log(`[Cron][DEBUG] contentId=${content.id} type=${content.__type} update=${content.updateTime} inLast2h=${inWindow}`);
+        if (inWindow) {
+          const link = buildClassroomLink({
+            courseId: course.id,
+            itemId: content.id,
+            type: content.__type,
+          });
+          const message =
+            content.__type === "material"
+              ? `📌 Material\nCourse: ${course.name}\nTitle: ${content.title}\nLink: ${link}`
+              : `📌 Announcement\nCourse: ${course.name}\nText: ${content.text}\nLink: ${link}`;
           console.log(`[Cron][SEND] ${message}`);
           await sendMessageToGoogleUser(googleId, message);
         }
@@ -110,11 +125,18 @@ async function checkNewContent(oauth2Client, googleId, courses) {
     );
     for (const content of allContent) {
       const contentTime = new Date(content.updateTime);
-      if (contentTime > new Date(lastCheckedString)) {
-        const link = content.alternateLink || "Link not available";
-        const message = content.title
-          ? `📌 Material\nCourse: ${course.name}\nTitle: ${content.title}\nLink: ${link}`
-          : `📌 Announcement\nCourse: ${course.name}\nText: ${content.text}\nLink: ${link}`;
+      const isNewer = contentTime > new Date(lastCheckedString);
+      console.log(`[Cron][DEBUG] Compare contentId=${content.id} type=${content.__type} update=${content.updateTime} > lastChecked=${lastCheckedString} => ${isNewer}`);
+      if (isNewer) {
+        const link = buildClassroomLink({
+          courseId: course.id,
+          itemId: content.id,
+          type: content.__type,
+        });
+        const message =
+          content.__type === "material"
+            ? `📌 Material\nCourse: ${course.name}\nTitle: ${content.title}\nLink: ${link}`
+            : `📌 Announcement\nCourse: ${course.name}\nText: ${content.text}\nLink: ${link}`;
         console.log(`[Cron][SEND] ${message}`);
         await sendMessageToGoogleUser(googleId, message);
       } else {
@@ -166,18 +188,19 @@ async function checkReminders(oauth2Client, googleId, courses) {
       const diffHours = (due.getTime() - now.getTime()) / (1000 * 60 * 60);
 
       console.log(
-        `[Cron][DEBUG] Assignment "${
-          a.title
-        }" due=${due}, diffHours=${diffHours.toFixed(2)}`
+        `[Cron][DEBUG] Assignment "${a.title}" id=${a.id} courseId=${course.id} due=${due.toISOString()}, diffHours=${diffHours.toFixed(2)}`
       );
 
-      if (diffHours <= 0 || diffHours > 24.5) continue; // ignore past/far future
+      if (diffHours <= 0 || diffHours > 24.5) {
+        console.log(`[Cron][DEBUG] Skipping reminder window. diffHours=${diffHours.toFixed(2)}`);
+        continue; // ignore past/far future
+      }
 
       const turnedIn = await isTurnedIn(oauth2Client, course.id, a.id, "me");
       console.log(`[Cron][DEBUG] TurnedIn=${turnedIn}`);
       if (turnedIn) continue;
 
-      const reminders = [24, 12, 6, 2];
+      const reminders = [24, 12, 6, 2]; // windows
       for (const h of reminders) {
         const alreadySent = await reminderAlreadySent(a.id, googleId, `${h}h`);
         console.log(
@@ -185,12 +208,21 @@ async function checkReminders(oauth2Client, googleId, courses) {
         );
         if (diffHours <= h && !alreadySent) {
           const formattedTime = formatDueDateTime(a.dueDate, a.dueTime);
-          const link = a.alternateLink || "Link not available";
-          const message = `📌 Assignment Reminder\nCourse: ${course.name}\nTitle: ${a.title}\nDue: ${formattedTime}\nLink: ${link}`;
+          const link = buildClassroomLink({
+            courseId: course.id,
+            itemId: a.id,
+            type: "assignment",
+          });
+          const message =
+            `📌 Assignment Reminder\n` +
+            `Course: ${course.name}\n` +
+            `Title: ${a.title}\n` +
+            `Due: ${formattedTime}\n` +
+            `Link: ${link}`;
           console.log(`[Cron][SEND] ${message}`);
           await sendMessageToGoogleUser(googleId, message);
           await markReminderSent(a.id, googleId, `${h}h`);
-          break;
+          break; // prevent multiple reminders in same run
         }
       }
     }
