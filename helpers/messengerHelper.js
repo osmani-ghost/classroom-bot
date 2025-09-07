@@ -1,19 +1,17 @@
 import fetch from "node-fetch";
-import { getUser } from "./redisHelper.js";
+import { getUserByPsid, getUser, searchIndexedItems } from "./redisHelper.js";
 
-// ==========================
-// Generic Messenger API Request
-// ==========================
+// --- send to Facebook Messenger API with debug logs ---
 async function sendApiRequest(payload) {
   const PAGE_ACCESS_TOKEN = process.env.MESSENGER_PAGE_ACCESS_TOKEN;
   if (!PAGE_ACCESS_TOKEN) {
-    console.error("❌ PAGE_ACCESS_TOKEN missing in environment variables.");
+    console.error("❌ PAGE_ACCESS_TOKEN is missing in environment variables.");
     return;
   }
 
   const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
   try {
-    console.log(`[Messenger] Sending API request to PSID: ${payload.recipient.id}`);
+    console.log(`[Messenger] Sending API request payload to recipient: ${JSON.stringify(payload.recipient).substring(0,200)}`);
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -23,32 +21,26 @@ async function sendApiRequest(payload) {
     if (result.error) {
       console.error("[Messenger] API Error:", result.error);
     } else {
-      console.log("[Messenger] API Response:", result);
+      console.log("[Messenger] API Response:", JSON.stringify(result).substring(0,500));
     }
   } catch (error) {
     console.error("❌ Failed to send message:", error);
   }
 }
 
-// ==========================
-// Send simple text message
-// ==========================
+// Send plain text
 export async function sendRawMessage(psid, text) {
-  if (!psid) return console.warn("[Messenger] PSID is missing for sendRawMessage.");
+  console.log(`[Messenger] sendRawMessage to ${psid}: ${text.substring(0,400)}`);
   const payload = { recipient: { id: psid }, message: { text } };
   await sendApiRequest(payload);
 }
 
-// ==========================
-// Send "Login with Google" button
-// ==========================
+// Send login button
 export async function sendLoginButton(psid) {
-  if (!psid) return console.warn("[Messenger] PSID is missing for sendLoginButton.");
-  const domain = process.env.PUBLIC_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "");
-  if (!domain) return console.error("❌ Cannot determine domain for Google login URL.");
-
+  const domain = process.env.PUBLIC_URL || `https://${process.env.VERCEL_URL}`;
   const loginUrl = `${domain}/api/auth/google?psid=${psid}`;
 
+  console.log(`[Messenger] Sending Login button to PSID ${psid} -> ${loginUrl}`);
   const payload = {
     recipient: { id: psid },
     message: {
@@ -56,10 +48,8 @@ export async function sendLoginButton(psid) {
         type: "template",
         payload: {
           template_type: "button",
-          text: "Welcome! Please log in with your university Google account to receive reminders.",
-          buttons: [
-            { type: "web_url", url: loginUrl, title: "Login with Google" },
-          ],
+          text: "Welcome! Please log in with your university Google account to receive reminders and search your Classroom.",
+          buttons: [{ type: "web_url", url: loginUrl, title: "Login with Google" }],
         },
       },
     },
@@ -67,15 +57,217 @@ export async function sendLoginButton(psid) {
   await sendApiRequest(payload);
 }
 
-// ==========================
-// Send message using Google ID
-// ==========================
+// send by googleId
 export async function sendMessageToGoogleUser(googleId, text) {
-  if (!googleId) return console.warn("[Messenger] Google ID is missing for sendMessageToGoogleUser.");
+  console.log(`[Messenger] sendMessageToGoogleUser for googleId ${googleId}: ${text.substring(0,200)}`);
   const user = await getUser(googleId);
   if (!user || !user.psid) {
-    console.error(`⚠️ No PSID mapped for Google ID: ${googleId}.`);
+    console.error(`⚠️ No PSID mapped for Google ID: ${googleId}. Cannot send message.`);
     return;
   }
   await sendRawMessage(user.psid, text);
+}
+
+// Format a single item for Messenger UI (clean)
+export function formatItemMessage(item) {
+  const typeTitle = item.type ? `${capitalize(item.type)}` : "Item";
+  const course = item.courseName || item.courseId || "Unknown course";
+  const title = item.title || "No title";
+  const dueText = item.dueDate ? formatDueShort(item.dueDate, item.dueTime) : null;
+  const link = item.link || "Link not available";
+
+  let body = `📘 ${course}\nTitle: ${title}\nType: ${typeTitle}`;
+  if (dueText) body += `\nDeadline: ${dueText}`;
+  body += `\nLink: ${link}`;
+  return body;
+}
+
+function capitalize(s) {
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function formatDueShort(dueDate, dueTime) {
+  try {
+    if (!dueDate) return "End of day";
+    const utcDate = new Date(
+      Date.UTC(
+        dueDate.year,
+        dueDate.month - 1,
+        dueDate.day,
+        dueTime?.hours || 23,
+        dueTime?.minutes || 0
+      )
+    );
+    utcDate.setHours(utcDate.getHours() + 6); // to BDT (UTC+6)
+    const day = utcDate.getDate().toString().padStart(2, "0");
+    const month = (utcDate.getMonth() + 1).toString().padStart(2, "0");
+    const year = utcDate.getFullYear();
+    let hours = utcDate.getHours();
+    const minutes = utcDate.getMinutes().toString().padStart(2, "0");
+    const ampm = hours >= 12 ? "PM" : "AM";
+    hours = hours % 12 || 12;
+    return `${day}-${month}-${year}, ${hours}:${minutes} ${ampm}`;
+  } catch (e) {
+    return "Unknown";
+  }
+}
+
+// Accept psid and raw user text -> handle search commands & free text
+export async function handleUserTextMessage(psid, text) {
+  console.log(`[Messenger] handleUserTextMessage from ${psid}: "${text}"`);
+  // Determine googleId for psid
+  const user = await getUserByPsid(psid);
+  if (!user) {
+    console.log(`[Messenger] PSID ${psid} not linked to any googleId. Sending login prompt.`);
+    await sendLoginButton(psid);
+    return;
+  }
+  const googleId = user.googleId;
+  // Check for shortcut commands beginning with /
+  if (text.trim().startsWith("/")) {
+    const parts = text.trim().slice(1).split(/\s+/);
+    const command = parts[0].toLowerCase();
+    const arg = parts.slice(1).join(" ");
+    console.log(`[Messenger] Shortcut detected: /${command} ${arg}`);
+
+    let filters = {};
+    if (command === "assignments") filters.type = "assignment";
+    if (command === "materials") filters.type = "material";
+    if (command === "announcements") filters.type = "announcement";
+
+    if (arg) {
+      // If arg is a date like today/tomorrow/thisweek/lastweek, compute dateRange; else treat as course name
+      const dateRange = parseDateKeyword(arg);
+      if (dateRange) {
+        filters.dateRange = dateRange;
+      } else {
+        filters.course = arg;
+      }
+    }
+
+    const results = await searchIndexedItems(googleId, filters);
+    if (results.length === 0) {
+      await sendRawMessage(psid, `🔍 No results found for your query.`);
+      return;
+    }
+    const messages = results.slice(0, 10).map(i => formatItemMessage(i));
+    const combined = messages.join("\n\n—\n\n");
+    await sendRawMessage(psid, combined);
+    return;
+  }
+
+  // Natural language: extract course name (simple), type keywords, date keywords, and other keywords
+  const lower = text.toLowerCase();
+  const filters = {};
+  // Type
+  if (lower.includes("assignment") || lower.includes("assignments") || lower.includes("due")) filters.type = "assignment";
+  if (lower.includes("material") || lower.includes("notes") || lower.includes("notes") || lower.includes("slide")) filters.type = "material";
+  if (lower.includes("announcement") || lower.includes("notice")) filters.type = "announcement";
+
+  // Course detection: look for "physics", "math", etc. We'll try to pick the first capitalized word in original text if not found.
+  // Very naive: any word followed by "notes" or before "assignment" returned as course
+  const courseMatch = text.match(/([A-Z][a-zA-Z0-9 &\-]{2,})\s+(notes|assignment|assignments|materials|homework|hw|due)/);
+  if (courseMatch) {
+    filters.course = courseMatch[1];
+  } else {
+    // fallback: look for explicit course name word like physics, math, chemistry
+    const known = ["physics","chemistry","math","mathematics","biology","english","history","bangla","programming","cse"];
+    for (const k of known) {
+      if (lower.includes(k)) {
+        filters.course = k;
+        break;
+      }
+    }
+  }
+
+  // date detection
+  const dateRange = parseDateKeyword(text);
+  if (dateRange) filters.dateRange = dateRange;
+
+  // keywords: any remaining words (remove stopwords)
+  const keywords = extractKeywords(text);
+  if (keywords.length > 0) filters.keywords = keywords;
+
+  console.log(`[Messenger] Parsed filters: ${JSON.stringify(filters)}`);
+
+  const results = await searchIndexedItems(googleId, filters);
+  if (!results || results.length === 0) {
+    await sendRawMessage(psid, `🔍 No results found. Try different keywords or use /assignments today`);
+    return;
+  }
+
+  // Format results into neat messages, but avoid spamming many messages
+  const maxToSend = 8;
+  const toSend = results.slice(0, maxToSend);
+  const messages = toSend.map(i => formatItemMessage(i));
+  const combined = messages.join("\n\n—\n\n");
+  await sendRawMessage(psid, combined);
+
+  // If we had more results, inform the user how to refine
+  if (results.length > maxToSend) {
+    await sendRawMessage(psid, `📎 ${results.length} results found. Showing top ${maxToSend}. Refine your query for more specific results.`);
+  }
+}
+
+// Small date parser for keywords: today, tomorrow, thisweek, lastweek
+function parseDateKeyword(text) {
+  const lower = text.toLowerCase();
+  const now = new Date();
+  if (lower.includes("today")) {
+    const from = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    const to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+    return { from: from.toISOString(), to: to.toISOString() };
+  }
+  if (lower.includes("tomorrow")) {
+    const t = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const from = new Date(t.getFullYear(), t.getMonth(), t.getDate(), 0, 0, 0);
+    const to = new Date(t.getFullYear(), t.getMonth(), t.getDate(), 23, 59, 59);
+    return { from: from.toISOString(), to: to.toISOString() };
+  }
+  if (lower.includes("thisweek") || lower.includes("this week")) {
+    // week: Monday - Sunday (assume Monday)
+    const day = now.getDay(); // 0 Sun, 1 Mon...
+    const diffToMon = (day + 6) % 7;
+    const mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMon);
+    const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6, 23, 59, 59);
+    return { from: mon.toISOString(), to: sun.toISOString() };
+  }
+  if (lower.includes("lastweek") || lower.includes("last week")) {
+    const day = now.getDay();
+    const diffToMon = (day + 6) % 7;
+    const mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMon - 7);
+    const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6, 23, 59, 59);
+    return { from: mon.toISOString(), to: sun.toISOString() };
+  }
+  // date words like "from last 7 days" or "last 7 days"
+  const m = text.match(/last\s+(\d+)\s+days/);
+  if (m) {
+    const d = parseInt(m[1], 10);
+    const from = new Date(now.getTime() - d * 24 * 60 * 60 * 1000);
+    return { from: from.toISOString(), to: now.toISOString() };
+  }
+  return null;
+}
+
+function extractKeywords(text) {
+  const lower = text.toLowerCase();
+  const tokens = lower.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+  const stop = new Set(["the","and","or","of","in","on","a","an","to","for","with","by","from","this","that","is","are","me","i","show","find","all","please","give","send","my","from","last","week","today","tomorrow"]);
+  const out = [];
+  for (const t of tokens) {
+    if (t.length <= 2) continue;
+    if (stop.has(t)) continue;
+    if (!out.includes(t)) out.push(t);
+  }
+  return out.slice(0, 10);
+}
+
+// Utility used by cron to format lists before sending (keeps to max items)
+export function formatListForMessenger(items, max = 6) {
+  if (!items || items.length === 0) return "No items found.";
+  const slice = items.slice(0, max);
+  const messages = slice.map(i => formatItemMessage(i));
+  const combined = messages.join("\n\n—\n\n");
+  return combined;
 }

@@ -3,64 +3,82 @@ import fetch from "node-fetch";
 const REDIS_URL = process.env.REDIS_REST_URL;
 const REDIS_TOKEN = process.env.REDIS_REST_TOKEN;
 
-// =========================
-// Redis REST Command
-// =========================
+if (!REDIS_URL || !REDIS_TOKEN) {
+  console.warn("⚠️ REDIS_REST_URL or REDIS_REST_TOKEN missing from environment. Redis ops will fail.");
+}
+
 async function redisCommand(command, ...args) {
   if (!REDIS_URL || !REDIS_TOKEN) {
     throw new Error("Redis URL or Token is missing.");
   }
 
-  console.log(`[Redis Debug] Command: ${command}, Args: ${args}`);
-
+  // SET: POST body
   if (command.toLowerCase() === "set") {
     const [key, value] = args;
-    const response = await fetch(`${REDIS_URL}/set/${key}`, {
+    console.log(`[Redis][COMMAND] SET ${key} -> ${String(value).substring(0, 500)}`);
+    const response = await fetch(`${REDIS_URL}/set/${encodeURIComponent(key)}`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
-      body: value,
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}`, "Content-Type": "application/json" },
+      body: typeof value === "string" ? value : JSON.stringify(value),
     });
-    if (!response.ok)
-      throw new Error(`Redis SET command failed: ${await response.text()}`);
-    console.log(`[Redis Debug] SET ${key} -> ${value}`);
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Redis SET command failed: ${text}`);
+    }
     return response.json();
   }
 
-  const response = await fetch(`${REDIS_URL}/${command}/${args.join("/")}`, {
+  // GET, KEYS etc
+  console.log(`[Redis][COMMAND] ${command.toUpperCase()} ${args.join(" ")}`);
+  const response = await fetch(`${REDIS_URL}/${command}/${args.map(a => encodeURIComponent(a)).join("/")}`, {
     headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
   });
-
-  if (!response.ok) return { result: null };
-  const resJson = await response.json();
-  console.log(`[Redis Debug] ${command} ${args} -> ${JSON.stringify(resJson)}`);
-  return resJson;
+  if (!response.ok) {
+    const txt = await response.text();
+    console.warn(`[Redis] ${command} returned error: ${txt}`);
+    return { result: null };
+  }
+  return response.json();
 }
 
-// =========================
-// User Mapping
-// =========================
+// ------------------ User functions ------------------
 export async function saveUser(googleId, userData) {
-  await redisCommand(
-    "set",
-    `user:google:${googleId}`,
-    JSON.stringify(userData)
-  );
-  await redisCommand(
-    "set",
-    `user:psid:${userData.psid}`,
-    JSON.stringify({ googleId })
-  );
+  console.log(`[Redis] saveUser ${googleId} -> ${JSON.stringify(userData).substring(0, 500)}`);
+  await redisCommand("set", `user:google:${googleId}`, JSON.stringify(userData));
+  if (userData.psid) {
+    await redisCommand("set", `user:psid:${userData.psid}`, JSON.stringify({ googleId }));
+  }
 }
 
 export async function getUser(googleId) {
   const result = await redisCommand("get", `user:google:${googleId}`);
-  return result && result.result ? JSON.parse(result.result) : null;
+  if (!result || !result.result) return null;
+  try {
+    return JSON.parse(result.result);
+  } catch (e) {
+    console.error("[Redis] Failed to parse getUser result:", e);
+    return null;
+  }
+}
+
+export async function getUserByPsid(psid) {
+  const result = await redisCommand("get", `user:psid:${psid}`);
+  if (!result || !result.result) return null;
+  try {
+    const obj = JSON.parse(result.result);
+    if (!obj.googleId) return null;
+    return await getUser(obj.googleId);
+  } catch (e) {
+    console.error("[Redis] getUserByPsid parse error:", e);
+    return null;
+  }
 }
 
 export async function getAllUserGoogleIds() {
   const result = await redisCommand("keys", "user:google:*");
   if (result && Array.isArray(result.result)) {
-    return result.result.map((key) => key.replace("user:google:", ""));
+    console.log(`[Redis] Found user keys: ${result.result.length}`);
+    return result.result.map(key => key.replace("user:google:", ""));
   }
   return [];
 }
@@ -70,23 +88,19 @@ export async function isPsidRegistered(psid) {
   return !!(result && result.result);
 }
 
-// =========================
-// Reminder Tracking
-// =========================
+// ------------------ Reminder tracking ------------------
 export async function reminderAlreadySent(assignmentId, googleId, hours) {
   const key = `reminder:${assignmentId}:${googleId}`;
   const result = await redisCommand("get", key);
-  const recordString = result ? result.result : null;
-  const record = recordString
-    ? JSON.parse(recordString)
-    : { remindersSent: [] };
+  const recordString = result && result.result ? result.result : null;
+  const record = recordString ? JSON.parse(recordString) : { remindersSent: [] };
   return record.remindersSent.includes(hours);
 }
 
 export async function markReminderSent(assignmentId, googleId, hours) {
   const key = `reminder:${assignmentId}:${googleId}`;
   const result = await redisCommand("get", key);
-  const recordString = result ? result.result : null;
+  const recordString = result && result.result ? result.result : null;
   let record = recordString ? JSON.parse(recordString) : { remindersSent: [] };
   if (!record.remindersSent.includes(hours)) {
     record.remindersSent.push(hours);
@@ -94,9 +108,7 @@ export async function markReminderSent(assignmentId, googleId, hours) {
   await redisCommand("set", key, JSON.stringify(record));
 }
 
-// =========================
-// Last Checked Tracking
-// =========================
+// ------------------ Last checked times (per course) ------------------
 export async function getLastCheckedTime(courseId) {
   const key = `lastpost:${courseId}`;
   const result = await redisCommand("get", key);
@@ -105,41 +117,180 @@ export async function getLastCheckedTime(courseId) {
 
 export async function setLastCheckedTime(courseId, time) {
   const key = `lastpost:${courseId}`;
+  console.log(`[Redis] setLastCheckedTime ${courseId} -> ${time}`);
   await redisCommand("set", key, time);
 }
 
-// =========================
-// Content Save / Search
-// =========================
-export async function saveContent(courseId, contentId, data) {
-  const key = `content:${courseId}:${contentId}`;
-  await redisCommand("set", key, JSON.stringify(data));
+// ------------------ Last assignment checked time (per course) ------------------
+export async function getLastAssignmentTime(courseId) {
+  const key = `lastassignment:${courseId}`;
+  const result = await redisCommand("get", key);
+  return result ? result.result : null;
 }
 
-export async function getAllContentForUser(googleId) {
-  const keysRes = await redisCommand("keys", "content:*");
-  const keys = keysRes?.result || [];
-  const allData = [];
+export async function setLastAssignmentTime(courseId, time) {
+  const key = `lastassignment:${courseId}`;
+  console.log(`[Redis] setLastAssignmentTime ${courseId} -> ${time}`);
+  await redisCommand("set", key, time);
+}
+
+// ------------------ Index storage & search ------------------
+// We store items under keys: index:item:{googleId}:{type}:{courseId}:{itemId}
+// Also we store a small meta key: index:items:google:{googleId} -> JSON array of keys (so we can iterate quickly)
+export async function saveIndexedItem(googleId, item, isMeta = false) {
+  try {
+    if (isMeta && item.__meta) {
+      const metaKey = `index:meta:google:${googleId}`;
+      console.log(`[Redis][INDEX] Saving meta for ${googleId}: ${JSON.stringify(item).substring(0,200)}`);
+      await redisCommand("set", metaKey, JSON.stringify(item));
+      return;
+    }
+
+    // Ensure minimal required fields
+    const { id, type = "unknown", courseId = "unknown", title = "", createdTime = new Date().toISOString(), link = null } = item;
+    if (!id) {
+      // create synthetic id when necessary
+      item.id = `synthetic-${type}-${courseId}-${Math.random().toString(36).slice(2, 9)}`;
+    }
+    const key = `index:item:${googleId}:${type}:${courseId}:${item.id}`;
+    const payload = {
+      id: item.id,
+      type,
+      courseId,
+      courseName: item.courseName || null,
+      title,
+      description: item.description || "",
+      createdTime,
+      dueDate: item.dueDate || null,
+      dueTime: item.dueTime || null,
+      link: link || item.link || null,
+      keywords: generateKeywords(item.title || "", item.description || ""),
+      raw: item.raw || null,
+    };
+
+    console.log(`[Redis][INDEX] Setting ${key} -> ${JSON.stringify(payload).substring(0,500)}`);
+    await redisCommand("set", key, JSON.stringify(payload));
+
+    // Add to index list (array) for the user
+    const listKey = `index:items:google:${googleId}`;
+    const existingListResp = await redisCommand("get", listKey);
+    let existingList = [];
+    if (existingListResp && existingListResp.result) {
+      try {
+        existingList = JSON.parse(existingListResp.result);
+      } catch (e) {
+        console.error("[Redis][INDEX] Failed to parse existing list - resetting it.", e);
+        existingList = [];
+      }
+    }
+    if (!existingList.includes(key)) {
+      existingList.push(key);
+      await redisCommand("set", listKey, JSON.stringify(existingList));
+    }
+  } catch (err) {
+    console.error("[Redis][INDEX] saveIndexedItem failed:", err);
+  }
+}
+
+export async function getIndexedItemByKey(key) {
+  const result = await redisCommand("get", key);
+  if (!result || !result.result) return null;
+  try {
+    return JSON.parse(result.result);
+  } catch (e) {
+    console.error("[Redis] getIndexedItemByKey parse error:", e);
+    return null;
+  }
+}
+
+export async function getAllIndexedKeysForUser(googleId) {
+  const listKey = `index:items:google:${googleId}`;
+  const result = await redisCommand("get", listKey);
+  if (!result || !result.result) return [];
+  try {
+    const arr = JSON.parse(result.result);
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) {
+    console.error("[Redis] getAllIndexedKeysForUser parse error:", e);
+    return [];
+  }
+}
+
+// Very basic search: filters = { course?: string, type?: string, dateRange?: { from, to }, keywords?: [] }
+export async function searchIndexedItems(googleId, filters = {}) {
+  console.log(`[Redis][SEARCH] Searching items for ${googleId} with filters: ${JSON.stringify(filters)}`);
+  const keys = await getAllIndexedKeysForUser(googleId);
+  const results = [];
   for (const key of keys) {
-    const contentRes = await redisCommand("get", key);
-    if (contentRes?.result) {
-      const content = JSON.parse(contentRes.result);
-      if (content.googleId === googleId) allData.push(content);
+    try {
+      const item = await getIndexedItemByKey(key);
+      if (!item) continue;
+
+      // skip meta
+      if (item.__meta) continue;
+
+      let pass = true;
+      // type filter
+      if (filters.type && filters.type.toLowerCase() !== item.type.toLowerCase()) pass = false;
+
+      // course filter (match substring case-insensitive)
+      if (filters.course) {
+        const courseLower = (item.courseName || "").toLowerCase();
+        if (!courseLower.includes(filters.course.toLowerCase())) pass = false;
+      }
+
+      // date filter
+      if (filters.dateRange) {
+        const created = new Date(item.createdTime);
+        if (filters.dateRange.from && created < new Date(filters.dateRange.from)) pass = false;
+        if (filters.dateRange.to && created > new Date(filters.dateRange.to)) pass = false;
+      }
+
+      // keyword filter: check item.title, description, keywords array
+      if (filters.keywords && filters.keywords.length > 0) {
+        const text = `${item.title} ${item.description} ${(item.keywords || []).join(" ")}`.toLowerCase();
+        const kws = filters.keywords.map(k => k.toLowerCase());
+        const anyMatch = kws.some(k => text.includes(k));
+        if (!anyMatch) pass = false;
+      }
+
+      if (pass) {
+        results.push(item);
+      }
+    } catch (e) {
+      console.error("[Redis][SEARCH] Error getting item:", e);
     }
   }
-  return allData;
+
+  // dedupe by link or id
+  const seen = new Set();
+  const deduped = [];
+  for (const r of results) {
+    const key = r.link || `${r.id}:${r.title}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(r);
+    }
+  }
+  console.log(`[Redis][SEARCH] Found ${deduped.length} results for ${googleId}`);
+  return deduped;
 }
 
-// =========================
-// Assignment Check / Save
-// =========================
-export async function checkAssignmentExists(courseId, assignmentId) {
-  const key = `assignment:${courseId}:${assignmentId}`;
-  const result = await redisCommand("get", key);
-  return !!(result && result.result);
-}
-
-export async function saveAssignment(courseId, assignmentId, data) {
-  const key = `assignment:${courseId}:${assignmentId}`;
-  await redisCommand("set", key, JSON.stringify(data));
+// Very small keyword generator & auto-tagging
+export function generateKeywords(title = "", description = "") {
+  const text = `${title} ${description}`.toLowerCase();
+  const rawWords = text.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+  const stop = new Set(["the","and","or","of","in","on","a","an","to","for","with","by","from","this","that","is","are","be"]);
+  const keywords = [];
+  for (const w of rawWords) {
+    if (w.length <= 2) continue;
+    if (stop.has(w)) continue;
+    if (!keywords.includes(w)) keywords.push(w);
+  }
+  // Add some domain-specific tags if present
+  const autos = ["lab", "report", "midterm", "final", "project", "homework", "hw", "assignment", "quiz"];
+  for (const a of autos) {
+    if (text.includes(a) && !keywords.includes(a)) keywords.push(a);
+  }
+  return keywords.slice(0, 30); // limit count
 }

@@ -7,36 +7,34 @@ export default function handler(req, res) {
       process.env.GOOGLE_CLIENT_SECRET,
       process.env.GOOGLE_REDIRECT_URI
     );
-
     const { psid } = req.query;
-    if (!psid) {
-      console.warn("[Google Auth] PSID missing in query params.");
-      return res.status(400).send("PSID is required.");
-    }
+    if (!psid) return res.status(400).send("PSID is missing.");
 
-    // --- ছাত্র এবং শিক্ষক উভয়ের জন্য অনুমতি স্কোপ ---
+    console.log(`[Google Auth] Generating auth URL for PSID: ${psid}`);
+
+    // --- এখানে ছাত্র এবং শিক্ষক উভয়ের জন্য সব প্রয়োজনীয় অনুমতি যোগ করা হয়েছে ---
     const scopes = [
-      'https://www.googleapis.com/auth/userinfo.profile', // প্রোফাইল তথ্য দেখার জন্য
-      'https://www.googleapis.com/auth/classroom.courses.readonly', // কোর্স তালিকা
-      'https://www.googleapis.com/auth/classroom.rosters.readonly', // ছাত্রছাত্রী তালিকা (শিক্ষক)
-      'https://www.googleapis.com/auth/classroom.announcements.readonly', // ঘোষণা
-      'https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly', // ম্যাটেরিয়াল
-      'https://www.googleapis.com/auth/classroom.coursework.students.readonly', // শিক্ষকের ছাত্রছাত্রীর কাজ
-      'https://www.googleapis.com/auth/classroom.coursework.me.readonly', // ছাত্রের নিজের কাজ
+      "https://www.googleapis.com/auth/userinfo.profile", // প্রোফাইল তথ্য দেখার জন্য
+      "https://www.googleapis.com/auth/classroom.courses.readonly", // কোর্সের তালিকা দেখার জন্য
+      "https://www.googleapis.com/auth/classroom.rosters.readonly", // ছাত্রছাত্রীর তালিকা দেখার জন্য (শিক্ষকের জন্য)
+      "https://www.googleapis.com/auth/classroom.announcements.readonly", // ঘোষণা দেখার জন্য
+      "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly", // ম্যাটেরিয়াল দেখার জন্য
+      // --- এই দুটি অনুমতি সবচেয়ে জরুরি ---
+      "https://www.googleapis.com/auth/classroom.coursework.students.readonly", // শিক্ষকের ছাত্রছাত্রীর কাজ দেখার অনুমতি
+      "https://www.googleapis.com/auth/classroom.coursework.me.readonly", // ছাত্রের নিজের কাজ দেখার অনুমতি
     ];
 
     const authUrl = oauth2Client.generateAuthUrl({
-      access_type: 'offline', // refresh token পাওয়ার জন্য
+      access_type: "offline",
       scope: scopes,
-      state: psid, // messenger PSID
-      prompt: 'consent', // user কে consent দিতে বাধ্য করবে
+      state: psid,
+      prompt: "consent",
     });
 
-    console.log(`[Google Auth] Redirecting PSID=${psid} to Google Auth URL`);
+    console.log(`[Google Auth] Redirecting PSID ${psid} to: ${authUrl}`);
     res.redirect(authUrl);
-
   } catch (error) {
-    console.error("❌ Error generating Google Auth URL:", error);
-    res.status(500).send("Error generating Google Auth URL.");
+    console.error("❌ Error generating auth URL:", error);
+    res.status(500).send("Error generating auth URL.");
   }
 }
