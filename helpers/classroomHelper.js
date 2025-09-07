@@ -1,52 +1,43 @@
-import { google } from "googleapis";
+import { redisClient } from "./redisHelper.js";
 
-async function executeApiCall(apiCall) {
+export async function indexAssignments(googleId, courses) {
   try {
-    const response = await apiCall();
-    return response.data || {};
-  } catch (error) {
-    console.error("❌ Google API Error:", error?.response?.data?.error || error?.message || error);
-    return {}; // error-resilient
-  }
-}
+    const indexedItems = [];
 
-export async function fetchCourses(oauth2Client) {
-  const classroom = google.classroom({ version: "v1", auth: oauth2Client });
-  const data = await executeApiCall(() => classroom.courses.list({ courseStates: ["ACTIVE"], pageSize: 200 }));
-  return data.courses || [];
-}
+    for (const course of courses) {
+      if (!course.assignments) continue;
 
-export async function fetchAssignments(oauth2Client, courseId) {
-  const classroom = google.classroom({ version: "v1", auth: oauth2Client });
-  const data = await executeApiCall(() => classroom.courses.courseWork.list({ courseId, pageSize: 500 }));
-  return data.courseWork || [];
-}
+      for (const item of course.assignments) {
+        const assignment = {
+          id: item.id,
+          type: "assignment",
+          courseId: course.id,
+          courseName: course.name,
+          title: item.title || item.text || "Untitled",
+          description: item.description || item.text || "",
+          createdTime: item.creationTime,
+          dueDate: item.dueDate,
+          dueTime: item.dueTime || { hours: 0, minutes: 0 },
+          link: item.link,
+          keywords: (item.title || item.text || "").toLowerCase().split(" "),
+          raw: item,
+        };
 
-export async function isTurnedIn(oauth2Client, courseId, assignmentId, studentId) {
-  const classroom = google.classroom({ version: "v1", auth: oauth2Client });
-  try {
-    const data = await executeApiCall(() => classroom.courses.courseWork.studentSubmissions.list({
-      courseId,
-      courseWorkId: assignmentId,
-      userId: studentId,
-      pageSize: 10,
-    }));
-    const submission = data.studentSubmissions?.[0];
-    return submission?.state === "TURNED_IN";
+        const key = `index:item:${googleId}:assignment:${course.id}:${item.id}`;
+        await redisClient.set(key, JSON.stringify(assignment));
+        indexedItems.push(key);
+      }
+    }
+
+    // Save all keys for the user
+    await redisClient.set(
+      `index:items:google:${googleId}`,
+      JSON.stringify(indexedItems)
+    );
+
+    console.log(`[INDEX] Indexed ${indexedItems.length} items for Google ID ${googleId}`);
+    return indexedItems;
   } catch (err) {
-    console.error("[ClassroomHelper] isTurnedIn error:", err);
-    return false;
+    console.error("[INDEX ERROR]", err);
   }
-}
-
-export async function fetchAnnouncements(oauth2Client, courseId) {
-  const classroom = google.classroom({ version: "v1", auth: oauth2Client });
-  const data = await executeApiCall(() => classroom.courses.announcements.list({ courseId, orderBy: 'updateTime desc', pageSize: 200 }));
-  return data.announcements || [];
-}
-
-export async function fetchMaterials(oauth2Client, courseId) {
-  const classroom = google.classroom({ version: "v1", auth: oauth2Client });
-  const data = await executeApiCall(() => classroom.courses.courseWorkMaterials.list({ courseId, orderBy: 'updateTime desc', pageSize: 200 }));
-  return data.courseWorkMaterial || [];
 }

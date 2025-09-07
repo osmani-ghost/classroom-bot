@@ -1,5 +1,5 @@
 import fetch from "node-fetch";
-import { getUserByPsid, getUser, searchIndexedItems } from "./redisHelper.js";
+import { getUserByPsid, getUser, redisClient } from "./redisHelper.js";
 
 // --- send to Facebook Messenger API with debug logs ---
 async function sendApiRequest(payload) {
@@ -11,7 +11,12 @@ async function sendApiRequest(payload) {
 
   const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
   try {
-    console.log(`[Messenger] Sending API request payload to recipient: ${JSON.stringify(payload.recipient).substring(0,200)}`);
+    console.log(
+      `[Messenger] Sending API request payload to recipient: ${JSON.stringify(payload.recipient).substring(
+        0,
+        200
+      )}`
+    );
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -21,7 +26,7 @@ async function sendApiRequest(payload) {
     if (result.error) {
       console.error("[Messenger] API Error:", result.error);
     } else {
-      console.log("[Messenger] API Response:", JSON.stringify(result).substring(0,500));
+      console.log("[Messenger] API Response:", JSON.stringify(result).substring(0, 500));
     }
   } catch (error) {
     console.error("❌ Failed to send message:", error);
@@ -30,7 +35,7 @@ async function sendApiRequest(payload) {
 
 // Send plain text
 export async function sendRawMessage(psid, text) {
-  console.log(`[Messenger] sendRawMessage to ${psid}: ${text.substring(0,400)}`);
+  console.log(`[Messenger] sendRawMessage to ${psid}: ${text.substring(0, 400)}`);
   const payload = { recipient: { id: psid }, message: { text } };
   await sendApiRequest(payload);
 }
@@ -59,7 +64,7 @@ export async function sendLoginButton(psid) {
 
 // send by googleId
 export async function sendMessageToGoogleUser(googleId, text) {
-  console.log(`[Messenger] sendMessageToGoogleUser for googleId ${googleId}: ${text.substring(0,200)}`);
+  console.log(`[Messenger] sendMessageToGoogleUser for googleId ${googleId}: ${text.substring(0, 200)}`);
   const user = await getUser(googleId);
   if (!user || !user.psid) {
     console.error(`⚠️ No PSID mapped for Google ID: ${googleId}. Cannot send message.`);
@@ -113,26 +118,77 @@ function formatDueShort(dueDate, dueTime) {
   }
 }
 
-// Accept psid and raw user text -> handle search commands & free text
+// -------------------- SEARCH LOGIC -----------------------
+async function searchIndexedItems(googleId, filters = {}) {
+  try {
+    const rawKeys = await redisClient.get(`index:items:google:${googleId}`);
+    if (!rawKeys) return [];
+    const keys = JSON.parse(rawKeys);
+    const items = [];
+    for (const key of keys) {
+      const raw = await redisClient.get(key);
+      if (!raw) continue;
+      items.push(JSON.parse(raw));
+    }
+
+    // Filter by type
+    let results = items;
+    if (filters.type) results = results.filter(i => i.type === filters.type);
+    // Filter by course name (case-insensitive)
+    if (filters.course) {
+      const c = filters.course.toLowerCase();
+      results = results.filter(i => i.courseName.toLowerCase().includes(c));
+    }
+    // Filter by date range
+    if (filters.dateRange) {
+      const from = new Date(filters.dateRange.from).getTime();
+      const to = new Date(filters.dateRange.to).getTime();
+      results = results.filter(i => {
+        if (!i.dueDate) return false;
+        const d = new Date(i.dueDate.year, i.dueDate.month - 1, i.dueDate.day).getTime();
+        return d >= from && d <= to;
+      });
+    }
+    // Filter by keywords
+    if (filters.keywords && filters.keywords.length > 0) {
+      results = results.filter(i => {
+        const text = ((i.title || "") + " " + (i.description || "")).toLowerCase();
+        return filters.keywords.every(k => text.includes(k));
+      });
+    }
+
+    // Sort by due date ascending
+    results.sort((a, b) => {
+      const da = a.dueDate ? new Date(a.dueDate.year, a.dueDate.month - 1, a.dueDate.day) : new Date();
+      const db = b.dueDate ? new Date(b.dueDate.year, b.dueDate.month - 1, b.dueDate.day) : new Date();
+      return da - db;
+    });
+
+    return results;
+  } catch (err) {
+    console.error("[SEARCH ERROR]", err);
+    return [];
+  }
+}
+
+// -------------------- USER MESSAGE HANDLER -----------------
 export async function handleUserTextMessage(psid, text) {
   console.log(`[Messenger] handleUserTextMessage from ${psid}: "${text}"`);
-  // Determine googleId for psid
   const user = await getUserByPsid(psid);
   if (!user) {
-    console.log(`[Messenger] PSID ${psid} not linked to any googleId. Sending login prompt.`);
     await sendLoginButton(psid);
     return;
   }
   const googleId = user.googleId;
 
-  // If starts with / -> shortcut
-  if (text.trim().startsWith("/")) {
-    const parts = text.trim().slice(1).split(/\s+/);
+  let filters = {};
+  const lower = text.toLowerCase();
+
+  // Command shortcut
+  if (text.startsWith("/")) {
+    const parts = text.slice(1).split(/\s+/);
     const command = parts[0].toLowerCase();
     const arg = parts.slice(1).join(" ");
-    console.log(`[Messenger] Shortcut detected: /${command} ${arg}`);
-
-    let filters = {};
     if (command === "assignments") filters.type = "assignment";
     if (command === "materials") filters.type = "material";
     if (command === "announcements") filters.type = "announcement";
@@ -142,51 +198,31 @@ export async function handleUserTextMessage(psid, text) {
       if (dateRange) filters.dateRange = dateRange;
       else filters.course = arg;
     }
-
-    const results = await searchIndexedItems(googleId, filters);
-    if (results.length === 0) {
-      await sendRawMessage(psid, `🔍 No results found for your query.`);
-      return;
-    }
-    const messages = results.slice(0, 10).map(i => formatItemMessage(i));
-    const combined = messages.join("\n\n—\n\n");
-    await sendRawMessage(psid, combined);
-    return;
-  }
-
-  // Natural language
-  const lower = text.toLowerCase();
-  const filters = {};
-  // Type detection
-  if (lower.includes("assignment") || lower.includes("assignments") || lower.includes("due")) filters.type = "assignment";
-  if (lower.includes("material") || lower.includes("notes") || lower.includes("slide")) filters.type = "material";
-  if (lower.includes("announcement") || lower.includes("notice")) filters.type = "announcement";
-
-  // Course detection via known keywords or patterns
-  const courseMatch = text.match(/([A-Z][a-zA-Z0-9 &\-]{2,})\s+(notes|assignment|assignments|materials|homework|hw|due)/);
-  if (courseMatch) {
-    filters.course = courseMatch[1];
   } else {
-    const known = ["physics","chemistry","math","mathematics","biology","english","history","bangla","programming","cse","share codes","test bot","share codes"];
+    // natural language
+    if (lower.includes("assignment") || lower.includes("due")) filters.type = "assignment";
+    if (lower.includes("material") || lower.includes("notes") || lower.includes("slide")) filters.type = "material";
+    if (lower.includes("announcement") || lower.includes("notice")) filters.type = "announcement";
+
+    // course detection
+    const known = ["share codes","test bot"];
     for (const k of known) {
       if (lower.includes(k)) {
         filters.course = k;
         break;
       }
     }
+
+    const dateRange = parseDateKeyword(text);
+    if (dateRange) filters.dateRange = dateRange;
+
+    const keywords = extractKeywords(text);
+    if (keywords.length > 0) filters.keywords = keywords;
   }
 
-  // date detection
-  const dateRange = parseDateKeyword(text);
-  if (dateRange) filters.dateRange = dateRange;
-
-  // keywords extraction
-  const keywords = extractKeywords(text);
-  if (keywords.length > 0) filters.keywords = keywords;
-
   console.log(`[Messenger] Parsed filters: ${JSON.stringify(filters)}`);
-
   const results = await searchIndexedItems(googleId, filters);
+
   if (!results || results.length === 0) {
     await sendRawMessage(psid, `🔍 No results found. Try different keywords or use /assignments today`);
     return;
@@ -195,11 +231,10 @@ export async function handleUserTextMessage(psid, text) {
   const maxToSend = 8;
   const toSend = results.slice(0, maxToSend);
   const messages = toSend.map(i => formatItemMessage(i));
-  const combined = messages.join("\n\n—\n\n");
-  await sendRawMessage(psid, combined);
+  await sendRawMessage(psid, messages.join("\n\n—\n\n"));
 
   if (results.length > maxToSend) {
-    await sendRawMessage(psid, `📎 ${results.length} results found. Showing top ${maxToSend}. Refine your query for more specific results.`);
+    await sendRawMessage(psid, `📎 ${results.length} results found. Showing top ${maxToSend}. Refine your query.`);
   }
 }
 
@@ -211,34 +246,11 @@ function parseDateKeyword(text) {
   const endOfDay = date => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59);
 
   if (lower.includes("today")) {
-    const from = startOfDay(now);
-    const to = endOfDay(now);
-    return { from: from.toISOString(), to: to.toISOString() };
+    return { from: startOfDay(now).toISOString(), to: endOfDay(now).toISOString() };
   }
   if (lower.includes("tomorrow")) {
     const t = new Date(now.getTime() + 24 * 60 * 60 * 1000);
     return { from: startOfDay(t).toISOString(), to: endOfDay(t).toISOString() };
-  }
-  if (lower.includes("thisweek") || lower.includes("this week")) {
-    // Monday-Sunday (assume Monday start)
-    const day = now.getDay(); // 0 Sun, 1 Mon...
-    const diffToMon = (day + 6) % 7;
-    const mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMon);
-    const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6, 23, 59, 59);
-    return { from: startOfDay(mon).toISOString(), to: sun.toISOString() };
-  }
-  if (lower.includes("lastweek") || lower.includes("last week")) {
-    const day = now.getDay();
-    const diffToMon = (day + 6) % 7;
-    const mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMon - 7);
-    const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6, 23, 59, 59);
-    return { from: startOfDay(mon).toISOString(), to: sun.toISOString() };
-  }
-  const m = text.match(/last\s+(\d+)\s+days/);
-  if (m) {
-    const d = parseInt(m[1], 10);
-    const from = new Date(now.getTime() - d * 24 * 60 * 60 * 1000);
-    return { from: from.toISOString(), to: now.toISOString() };
   }
   return null;
 }
