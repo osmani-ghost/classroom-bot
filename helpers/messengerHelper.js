@@ -11,7 +11,7 @@ import {
  * The original code referenced different names in places; we use MESSENGER_PAGE_ACCESS_TOKEN here.
  */
 
-const PAGE_ACCESS_TOKEN = process.env.MESSENGER_PAGE_ACCESS_TOKEN || process.env.MESSENGER_PAGE_TOKEN;
+const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
 
 /* Low-level API request */
 async function sendApiRequest(payload) {

@@ -5,7 +5,7 @@ import { isPsidRegistered } from "../helpers/redisHelper.js";
 export default async function handler(req, res) {
   console.log("\n--- /api/index.js: ENTRY ---");
   try {
-    const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
+    const VERIFY_TOKEN = process.env.FACEBOOK_VERIFY_TOKEN;
     // Cron trigger
     if (req.query.cron === "true") {
       console.log("[INDEX] Cron trigger received via query param.");
