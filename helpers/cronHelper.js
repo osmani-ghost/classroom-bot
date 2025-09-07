@@ -60,7 +60,7 @@ function formatDueDateTime(dueDate, dueTime) {
 }
 
 // =========================
-// Check new content (Announcements & Materials)
+// Check new content (Announcements, Materials & Assignments)
 // =========================
 async function checkNewContent(oauth2Client, googleId, courses) {
     console.log(`[Cron] Checking new content for user: ${googleId}`);
@@ -72,11 +72,17 @@ async function checkNewContent(oauth2Client, googleId, courses) {
         }
 
         const lastCheckedString = await getLastCheckedTime(course.id);
+
+        // === Fetch everything ===
         const announcements = await fetchAnnouncements(oauth2Client, course.id);
         const materials = await fetchMaterials(oauth2Client, course.id);
-        const allContent = [...announcements, ...materials].sort(
-            (a, b) => new Date(b.updateTime) - new Date(a.updateTime)
-        );
+        const assignments = await fetchAssignments(oauth2Client, course.id);
+
+        const allContent = [
+            ...announcements.map(a => ({...a, type:'announcement'})),
+            ...materials.map(m => ({...m, type:'material'})),
+            ...assignments.map(a => ({...a, type:'assignment'}))
+        ].sort((a, b) => new Date(b.updateTime) - new Date(a.updateTime));
 
         if (allContent.length === 0) continue;
         const latestContentTime = allContent[0].updateTime;
@@ -89,19 +95,26 @@ async function checkNewContent(oauth2Client, googleId, courses) {
                 const contentTime = new Date(content.updateTime);
                 if (contentTime > new Date(now.getTime() - 2 * 60 * 60 * 1000)) {
                     const link = content.alternateLink || "Link not available";
-                    const message = content.title
-                        ? `📌 Material\nCourse: ${course.name}\nTitle: ${content.title}\nLink: ${link}`
-                        : `📌 Announcement\nCourse: ${course.name}\nText: ${content.text}\nLink: ${link}`;
+                    let message = "";
+                    if(content.type === 'assignment') {
+                        const due = formatDueDateTime(content.dueDate, content.dueTime);
+                        message = `🆕 New Assignment Posted\nCourse: ${course.name}\nTitle: ${content.title}\nDue: ${due}\nLink: ${link}`;
+                    } else if(content.type === 'material') {
+                        message = `📌 Material\nCourse: ${course.name}\nTitle: ${content.title}\nLink: ${link}`;
+                    } else {
+                        message = `📌 Announcement\nCourse: ${course.name}\nText: ${content.text}\nLink: ${link}`;
+                    }
+
                     console.log(`[Cron][SEND] ${message}`);
                     await sendMessageToGoogleUser(googleId, message);
 
-                    // --- Save content to Redis for search/filter ---
+                    // Save content for search/filter
                     await saveContent(course.id, content.id || content.updateTime, {
                         googleId,
                         courseId: course.id,
                         courseName: course.name,
                         title: content.title || content.text,
-                        type: content.title ? 'material' : 'announcement',
+                        type: content.type,
                         date: content.updateTime,
                         link: link
                     });
@@ -117,9 +130,16 @@ async function checkNewContent(oauth2Client, googleId, courses) {
             const contentTime = new Date(content.updateTime);
             if (contentTime > new Date(lastCheckedString)) {
                 const link = content.alternateLink || "Link not available";
-                const message = content.title
-                    ? `📌 Material\nCourse: ${course.name}\nTitle: ${content.title}\nLink: ${link}`
-                    : `📌 Announcement\nCourse: ${course.name}\nText: ${content.text}\nLink: ${link}`;
+                let message = "";
+                if(content.type === 'assignment') {
+                    const due = formatDueDateTime(content.dueDate, content.dueTime);
+                    message = `🆕 New Assignment Posted\nCourse: ${course.name}\nTitle: ${content.title}\nDue: ${due}\nLink: ${link}`;
+                } else if(content.type === 'material') {
+                    message = `📌 Material\nCourse: ${course.name}\nTitle: ${content.title}\nLink: ${link}`;
+                } else {
+                    message = `📌 Announcement\nCourse: ${course.name}\nText: ${content.text}\nLink: ${link}`;
+                }
+
                 console.log(`[Cron][SEND] ${message}`);
                 await sendMessageToGoogleUser(googleId, message);
 
@@ -128,7 +148,7 @@ async function checkNewContent(oauth2Client, googleId, courses) {
                     courseId: course.id,
                     courseName: course.name,
                     title: content.title || content.text,
-                    type: content.title ? 'material' : 'announcement',
+                    type: content.type,
                     date: content.updateTime,
                     link: link
                 });
@@ -143,7 +163,7 @@ async function checkNewContent(oauth2Client, googleId, courses) {
 }
 
 // =========================
-// Assignment reminders
+// Assignment reminders (24h,12h,6h,2h)
 // =========================
 async function checkReminders(oauth2Client, googleId, courses) {
     console.log(`[Cron] Checking assignment reminders for user: ${googleId}`);
