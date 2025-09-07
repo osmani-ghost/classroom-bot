@@ -1,19 +1,19 @@
 import fetch from "node-fetch";
 import { getUser } from "./redisHelper.js";
 
-// এই ফাংশনটি ফেসবুক এপিআই-তে রিকোয়েস্ট পাঠায়
+// ==========================
+// Generic Messenger API Request
+// ==========================
 async function sendApiRequest(payload) {
   const PAGE_ACCESS_TOKEN = process.env.MESSENGER_PAGE_ACCESS_TOKEN;
   if (!PAGE_ACCESS_TOKEN) {
-    console.error("❌ PAGE_ACCESS_TOKEN is missing in environment variables.");
+    console.error("❌ PAGE_ACCESS_TOKEN missing in environment variables.");
     return;
   }
 
   const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
   try {
-    console.log(
-      `[Messenger] Sending API request to PSID: ${payload.recipient.id}`
-    );
+    console.log(`[Messenger] Sending API request to PSID: ${payload.recipient.id}`);
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -30,18 +30,23 @@ async function sendApiRequest(payload) {
   }
 }
 
-// এই ফাংশনটি সরাসরি মেসেঞ্জার PSID ব্যবহার করে টেক্সট মেসেজ পাঠায়
+// ==========================
+// Send simple text message
+// ==========================
 export async function sendRawMessage(psid, text) {
+  if (!psid) return console.warn("[Messenger] PSID is missing for sendRawMessage.");
   const payload = { recipient: { id: psid }, message: { text } };
   await sendApiRequest(payload);
 }
 
-// এই ফাংশনটি "Login with Google" বাটন পাঠায়
+// ==========================
+// Send "Login with Google" button
+// ==========================
 export async function sendLoginButton(psid) {
-  // --- এটাই মূল সমাধান ---
-  // লোকাল টেস্টিংয়ের জন্য PUBLIC_URL (ngrok) ব্যবহার করবে
-  // Vercel-এ ডিপ্লয় করার পর স্বয়ংক্রিয়ভাবে Vercel-এর নিজের URL ব্যবহার করবে
-  const domain = process.env.PUBLIC_URL || `https://${process.env.VERCEL_URL}`;
+  if (!psid) return console.warn("[Messenger] PSID is missing for sendLoginButton.");
+  const domain = process.env.PUBLIC_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "");
+  if (!domain) return console.error("❌ Cannot determine domain for Google login URL.");
+
   const loginUrl = `${domain}/api/auth/google?psid=${psid}`;
 
   const payload = {
@@ -62,8 +67,11 @@ export async function sendLoginButton(psid) {
   await sendApiRequest(payload);
 }
 
-// এই ফাংশনটি গুগল আইডি ব্যবহার করে মেসেজ পাঠায়
+// ==========================
+// Send message using Google ID
+// ==========================
 export async function sendMessageToGoogleUser(googleId, text) {
+  if (!googleId) return console.warn("[Messenger] Google ID is missing for sendMessageToGoogleUser.");
   const user = await getUser(googleId);
   if (!user || !user.psid) {
     console.error(`⚠️ No PSID mapped for Google ID: ${googleId}.`);
