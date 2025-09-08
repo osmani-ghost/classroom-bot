@@ -24,26 +24,27 @@ export default async function handler(req, res) {
       process.env.GOOGLE_REDIRECT_URI
     );
 
-    // Step 2: Define scopes
+    // Step 2: Define scopes (added courseworkmaterials.readonly)
     console.log("[AUTH][GOOGLE] Step 2: Defining scopes...");
     const scopes = [
       "https://www.googleapis.com/auth/classroom.courses.readonly",
       "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
+      "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly", // ✅ REQUIRED for materials.list
       "https://www.googleapis.com/auth/classroom.announcements.readonly",
       "https://www.googleapis.com/auth/classroom.student-submissions.me.readonly",
       "https://www.googleapis.com/auth/userinfo.email",
       "https://www.googleapis.com/auth/userinfo.profile",
       "openid"
     ];
-    console.log("[AUTH][GOOGLE] Scopes requested:", scopes);
+    console.log("[AUTH][GOOGLE] Scopes requested:", JSON.stringify(scopes, null, 2));
 
     // Step 3: Generate auth URL
     console.log("[AUTH][GOOGLE] Step 3: Generating consent screen URL...");
     const authUrl = oauth2Client.generateAuthUrl({
-      access_type: "offline",
-      prompt: "consent",
+      access_type: "offline",   // ensures refresh_token
+      prompt: "consent",        // force re-consent so new scopes are granted
       scope: scopes,
-      state: psid, // will come back in callback.js
+      state: psid,              // carry Messenger PSID for callback
     });
 
     console.log("[AUTH][GOOGLE] Generated Auth URL:", authUrl);
@@ -52,7 +53,8 @@ export default async function handler(req, res) {
     console.log("[AUTH][GOOGLE] Step 4: Redirecting user to Google consent screen...");
     res.redirect(authUrl);
 
-    console.log("[AUTH][GOOGLE] 🚀 Login flow initialized SUCCESSFULLY for PSID:", psid);
+    console.log("✅ [AUTH][GOOGLE] 🚀 Login flow initialized SUCCESSFULLY for PSID:", psid);
+    console.log("==============================\n");
   } catch (err) {
     console.error("❌ [AUTH][GOOGLE][CRITICAL ERROR] Failed to start login flow");
     console.error("Error stack:", err);
