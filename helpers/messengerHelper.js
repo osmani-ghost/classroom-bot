@@ -79,9 +79,18 @@ export async function sendMessageToGoogleUser(googleId, text) {
 // ======== UI Builders for "materials" flow (All include Classroom links) ========
 
 // Course list (numbered) — includes direct course links
-export async function sendCourseList(psid, courses) {
-  console.log("[MATERIALS][sendCourseList] Sending course list to PSID:", psid, "Count:", courses?.length || 0);
+export async function sendCourseList(psid, courses, userInput = null) {
+  console.log("[MATERIALS][sendCourseList] START", { psid, userInput, totalCourses: courses?.length || 0 });
+
+  // ✅ NEW: Handle "done"
+  if (userInput && userInput.trim().toLowerCase() === "done") {
+    console.log("[MATERIALS][sendCourseList] User typed 'done' → ending flow.");
+    await sendRawMessage(psid, "Okay");
+    return;
+  }
+
   if (!Array.isArray(courses) || courses.length === 0) {
+    console.log("[MATERIALS][sendCourseList] No courses found for user:", psid);
     await sendRawMessage(psid, "📚 No active Google Classroom courses found.");
     return;
   }
@@ -93,21 +102,32 @@ export async function sendCourseList(psid, courses) {
   });
 
   const msg = `Please choose a course by typing the number:\n\n${lines.join("\n\n")}`;
+  console.log("[MATERIALS][sendCourseList] Sending message:", msg.slice(0, 200));
   await sendRawMessage(psid, msg);
 }
 
 // Materials list for a course — paginated — includes direct links
-export async function sendMaterialsList(psid, course, materials, page = 1, pageSize = 5) {
-  console.log("[MATERIALS][sendMaterialsList] PSID:", psid, {
+export async function sendMaterialsList(psid, course, materials, page = 1, pageSize = 5, userInput = null) {
+  console.log("[MATERIALS][sendMaterialsList] START", {
+    psid,
     courseId: course?.id,
     courseName: course?.name,
     totalMaterials: materials?.length || 0,
     page,
     pageSize,
+    userInput,
   });
+
+  // ✅ NEW: Handle "done"
+  if (userInput && userInput.trim().toLowerCase() === "done") {
+    console.log("[MATERIALS][sendMaterialsList] User typed 'done' → ending flow.");
+    await sendRawMessage(psid, "Okay");
+    return;
+  }
 
   const courseLink = course?.alternateLink || "https://classroom.google.com";
   if (!Array.isArray(materials) || materials.length === 0) {
+    console.log("[MATERIALS][sendMaterialsList] No materials found for course:", course?.id);
     await sendRawMessage(
       psid,
       `📘 ${course?.name || "Course"} Materials — none found.\n↗ Open Course: ${courseLink}\n(Type 'back' to return to course list)`
@@ -125,31 +145,39 @@ export async function sendMaterialsList(psid, course, materials, page = 1, pageS
     const title = m.title || "Untitled Material";
     const link = m.alternateLink || courseLink;
     return `${idx + 1}. ${title}\n   ↗ Open: ${link}`;
-    // Description omitted here to keep list compact. Full detail shown in detail view.
   });
 
   let footer = `\nShowing page ${currentPage} of ${totalPages}`;
   if (currentPage < totalPages) {
     footer += `\nType 'next' to see more`;
   }
-  footer += `\n(Type 'back' to return to course list)`;
+  footer += `\n(Type 'back' to return to course list)\n(Type 'done' to finish)`;
 
   const msg = `📘 ${course?.name || "Course"} Materials — Select a material:\n\n${lines.join("\n\n")}\n${footer}\n\n↗ Open Course: ${courseLink}`;
+  console.log("[MATERIALS][sendMaterialsList] Sending message:", msg.slice(0, 200));
   await sendRawMessage(psid, msg);
 }
 
 // Material detail — includes description, uploaded date, and direct link
-export async function sendMaterialDetail(psid, course, material) {
-  console.log("[MATERIALS][sendMaterialDetail] PSID:", psid, {
+export async function sendMaterialDetail(psid, course, material, userInput = null) {
+  console.log("[MATERIALS][sendMaterialDetail] START", {
+    psid,
     courseId: course?.id,
     materialId: material?.id,
+    userInput,
   });
+
+  // ✅ NEW: Handle "done"
+  if (userInput && userInput.trim().toLowerCase() === "done") {
+    console.log("[MATERIALS][sendMaterialDetail] User typed 'done' → ending flow.");
+    await sendRawMessage(psid, "Okay");
+    return;
+  }
 
   const uploaded = material.updateTime ? new Date(material.updateTime) : null;
   let uploadedStr = "Unknown date";
   if (uploaded) {
-    // Convert to BDT (UTC+6)
-    uploaded.setHours(uploaded.getHours() + 6);
+    uploaded.setHours(uploaded.getHours() + 6); // Convert to BDT
     const dd = String(uploaded.getDate()).padStart(2, "0");
     const mm = String(uploaded.getMonth() + 1).padStart(2, "0");
     const yyyy = uploaded.getFullYear();
@@ -160,6 +188,7 @@ export async function sendMaterialDetail(psid, course, material) {
   const desc = material.description || "No description provided.";
   const link = material.alternateLink || course?.alternateLink || "https://classroom.google.com";
 
-  const msg = `📘 ${course?.name || "Course"} — ${title}\n\nDescription: ${desc}\nUploaded: ${uploadedStr}\n\n🔗 Open in Google Classroom: ${link}\n\n(Type 'back' to return to material list)`;
+  const msg = `📘 ${course?.name || "Course"} — ${title}\n\nDescription: ${desc}\nUploaded: ${uploadedStr}\n\n🔗 Open in Google Classroom: ${link}\n\n(Type 'back' to return to material list)\n(Type 'done' to finish)`;
+  console.log("[MATERIALS][sendMaterialDetail] Sending message:", msg.slice(0, 200));
   await sendRawMessage(psid, msg);
 }

@@ -85,7 +85,6 @@ async function checkNewContent(oauth2Client, googleId, courses) {
     if (allContent.length === 0) continue;
     const latestContentTime = allContent[0].updateTime;
 
-    // First run: send last 2 hours only
     if (!lastCheckedString) {
       console.log(`[Cron][Content] First run for ${course.name}, scanning last 2h.`);
       const now = new Date();
@@ -104,7 +103,6 @@ async function checkNewContent(oauth2Client, googleId, courses) {
       continue;
     }
 
-    // Normal run: only items newer than lastChecked
     for (const content of allContent) {
       const contentTime = new Date(content.updateTime);
       if (contentTime > new Date(lastCheckedString)) {
@@ -140,14 +138,13 @@ async function checkNewAssignmentsPosted(oauth2Client, googleId, courses) {
     const lastChecked = await getLastCheckedAssignmentsTime(course.id);
     console.log(`[Cron][NewAssignments] lastAssignmentChecked=${lastChecked} for course=${course.name} (${course.id})`);
 
-    const assignments = await fetchAssignments(oauth2Client, course.id); // orderBy updateTime desc
+    const assignments = await fetchAssignments(oauth2Client, course.id); 
     if (!assignments || assignments.length === 0) {
       console.log(`[Cron][NewAssignments] No coursework found for ${course.name}.`);
       continue;
     }
     const latestTime = assignments[0].updateTime || assignments[0].creationTime;
 
-    // First run: limit to last 2 hours to avoid spam
     if (!lastChecked) {
       console.log(`[Cron][NewAssignments] First run for ${course.name}, scanning last 2h.`);
       const now = new Date();
@@ -165,7 +162,6 @@ async function checkNewAssignmentsPosted(oauth2Client, googleId, courses) {
       continue;
     }
 
-    // Normal run: notify for items newer than lastChecked
     for (const a of assignments) {
       const t = new Date(a.updateTime || a.creationTime || 0);
       if (t > new Date(lastChecked)) {
@@ -186,7 +182,7 @@ async function checkNewAssignmentsPosted(oauth2Client, googleId, courses) {
 }
 
 // =========================
-// Assignment reminders (24h, 12h, 6h, 2h, 1h) — skip submitted, ignore overdue, prevent duplicates
+// Assignment reminders (12h, 6h, 2h only) — skip submitted, ignore overdue, prevent duplicates
 // =========================
 async function checkReminders(oauth2Client, googleId, courses) {
   console.log(`[Cron] Checking assignment reminders for user: ${googleId}`);
@@ -202,7 +198,7 @@ async function checkReminders(oauth2Client, googleId, courses) {
     console.log(`[Cron][Reminders] Course ${course.name} -> Assignments: ${assignments.length}`);
 
     for (const a of assignments) {
-      if (!a.dueDate) continue; // ignore assignments with no due date for reminders
+      if (!a.dueDate) continue;
 
       const due = new Date(
         Date.UTC(
@@ -218,25 +214,26 @@ async function checkReminders(oauth2Client, googleId, courses) {
       console.log(`[Cron][Reminders] "${a.title}" due=${due.toISOString()}, diffHours=${diffHours.toFixed(2)}`);
 
       if (diffHours <= 0 || diffHours > 24.5) {
-        console.log("[Cron][Reminders] Skipping due to time window (past or >24.5h).");
-        continue; // ignore past/far future
-      }
-
-      const turnedIn = await isTurnedIn(oauth2Client, course.id, a.id, "me");
-      console.log(`[Cron][Reminders] TurnedIn=${turnedIn}`);
-      if (turnedIn) {
-        console.log("[Cron][Reminders] Skipping because already TURNED_IN.");
+        console.log("[Cron][Reminders] ⏭️ Skipping due to time window (past or >24.5h).");
         continue;
       }
 
-      const reminders = [24, 12, 6, 2, 1];
+      const turnedIn = await isTurnedIn(oauth2Client, course.id, a.id, "me");
+      console.log(`[Cron][Reminders] Submission status=TURNED_IN? ${turnedIn}`);
+      if (turnedIn) {
+        console.log("[Cron][Reminders] ✅ Skipping because already TURNED_IN.");
+        continue;
+      }
+
+      const reminders = [12, 6, 2]; // ✅ Only these
       for (const h of reminders) {
         const alreadySent = await reminderAlreadySent(a.id, googleId, `${h}h`);
         console.log(`[Cron][Reminders] Check reminder ${h}h: alreadySent=${alreadySent}`);
-        if (diffHours <= h && !alreadySent) {
+
+        if (Math.abs(diffHours - h) <= 0.5 && !alreadySent) {
           const formattedTime = formatDueDateTime(a.dueDate, a.dueTime);
           const link = a.alternateLink || course.alternateLink || "https://classroom.google.com";
-          const message = `📌 Assignment Reminder\nCourse: ${course.name}\nTitle: ${a.title}\nDue: ${formattedTime}\nLink: ${link}`;
+          const message = `📌 Assignment Reminder (${h}h left)\nCourse: ${course.name}\nTitle: ${a.title}\nDue: ${formattedTime}\nLink: ${link}`;
           console.log(`[Cron][Reminders][SEND]`, message);
           await sendMessageToGoogleUser(googleId, message);
           await markReminderSent(a.id, googleId, `${h}h`);
