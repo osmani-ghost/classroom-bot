@@ -1,60 +1,54 @@
 import fetch from "node-fetch";
-import {
-  getUser,
-  getAllItemsForPsid,
-  searchItemsForPsid,
-} from "./redisHelper.js";
+import { getUser } from "./redisHelper.js";
 
-/**
- * NOTE on env names:
- * Your .env contains MESSENGER_PAGE_ACCESS_TOKEN and MESSENGER_VERIFY_TOKEN.
- * The original code referenced different names in places; we use MESSENGER_PAGE_ACCESS_TOKEN here.
- */
+const FB_API_VERSION = "v19.0";
 
-const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
-
-/* Low-level API request */
+// Core sender to Facebook Messenger Send API
 async function sendApiRequest(payload) {
+  const PAGE_ACCESS_TOKEN = process.env.MESSENGER_PAGE_ACCESS_TOKEN;
+  const url = `https://graph.facebook.com/${FB_API_VERSION}/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
+
+  console.log("[Messenger][sendApiRequest] START", {
+    hasToken: !!PAGE_ACCESS_TOKEN,
+    recipient: payload?.recipient?.id,
+    messagePreview: JSON.stringify(payload?.message)?.slice(0, 200),
+  });
+
   if (!PAGE_ACCESS_TOKEN) {
-    console.error("❌ PAGE_ACCESS_TOKEN is missing in environment variables.");
+    console.error("❌ [Messenger] MESSENGER_PAGE_ACCESS_TOKEN is missing.");
     return;
   }
-  const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`;
+
   try {
-    console.log(`[Messenger] Sending API request to PSID: ${payload.recipient?.id}`);
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     const result = await response.json();
-    if (result.error) {
-      console.error("[Messenger] API Error:", result.error);
+    if (!response.ok || result.error) {
+      console.error("[Messenger][sendApiRequest] API Error:", result.error || result);
     } else {
-      console.log("[Messenger] API Response:", result);
+      console.log("[Messenger][sendApiRequest] SUCCESS:", result);
     }
-    return result;
   } catch (error) {
-    console.error("❌ Failed to send message:", error);
-    throw error;
+    console.error("❌ [Messenger][sendApiRequest] Network/Unknown Error:", error);
   }
 }
 
-/* Raw text message */
+// Send plain text
 export async function sendRawMessage(psid, text) {
-  console.log(`[Messenger] sendRawMessage -> psid=${psid}, textPreview="${String(text).slice(0, 80)}"`);
-  const payload = {
-    recipient: { id: psid },
-    message: { text },
-  };
-  return sendApiRequest(payload);
+  console.log("[Messenger][sendRawMessage] → PSID:", psid, "Text Preview:", (text || "").slice(0, 200));
+  const payload = { recipient: { id: psid }, message: { text } };
+  await sendApiRequest(payload);
 }
 
-/* Login button */
+// Send "Login with Google" button
 export async function sendLoginButton(psid) {
-  console.log(`[Messenger] sendLoginButton -> psid=${psid}`);
   const domain = process.env.PUBLIC_URL || `https://${process.env.VERCEL_URL}`;
-  const loginUrl = `${domain}/api/auth/google?psid=${psid}`;
+  const loginUrl = `${domain}/api/auth/google?psid=${encodeURIComponent(psid)}`;
+  console.log("[Messenger][sendLoginButton] Using loginUrl:", loginUrl);
+
   const payload = {
     recipient: { id: psid },
     message: {
@@ -63,172 +57,109 @@ export async function sendLoginButton(psid) {
         payload: {
           template_type: "button",
           text: "Welcome! Please log in with your university Google account to receive reminders.",
-          buttons: [
-            {
-              type: "web_url",
-              url: loginUrl,
-              title: "Login with Google",
-            },
-          ],
+          buttons: [{ type: "web_url", url: loginUrl, title: "Login with Google" }],
         },
       },
     },
   };
-  return sendApiRequest(payload);
+  await sendApiRequest(payload);
 }
 
-/* Send message using Google ID mapping */
+// Send to a user by Google ID (maps to PSID via Redis)
 export async function sendMessageToGoogleUser(googleId, text) {
-  console.log(`[Messenger] sendMessageToGoogleUser -> googleId=${googleId}`);
+  console.log("[Messenger][sendMessageToGoogleUser] GoogleID:", googleId, "Text Preview:", (text || "").slice(0, 200));
   const user = await getUser(googleId);
   if (!user || !user.psid) {
-    console.error(`⚠️ No PSID mapped for Google ID: ${googleId}. Cannot send message.`);
+    console.error(`⚠️ [Messenger] No PSID mapped for Google ID: ${googleId}. Skipping send.`);
     return;
   }
-  return sendRawMessage(user.psid, text);
+  await sendRawMessage(user.psid, text);
 }
 
-/* Helper: sleep */
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+// ======== UI Builders for "materials" flow (All include Classroom links) ========
 
-/* High-level incoming message handler
-   - Recognizes /commands and natural heuristics
-   - Calls Redis search and formats replies
-*/
-export async function handleIncomingMessage(psid, text) {
-  console.log(`[Messenger] handleIncomingMessage -> psid=${psid}, text="${text}"`);
-  try {
-    if (!text || text.trim().length === 0) {
-      console.log("[Messenger] Empty message text -> send help");
-      await sendRawMessage(psid, "Please type a command. Try: /assignments today or /materials chemistry");
-      return;
-    }
-
-    const normalized = text.trim().toLowerCase();
-    // if starts with slash -> explicit commands
-    let command = null;
-    let arg = null;
-
-    if (normalized.startsWith("/")) {
-      const parts = normalized.split(/\s+/);
-      command = parts[0]; // e.g., /assignments
-      arg = parts.slice(1).join(" ") || null;
-      console.log(`[Messenger] Detected slash command: ${command} arg="${arg}"`);
-    } else {
-      // Natural language heuristics: simple keyword matching
-      // Look for keywords for type, timeframe, or course
-      const tokens = normalized.split(/\s+/);
-      const typeHints = ["assignment", "assign", "homework", "task"];
-      const materialHints = ["material", "materials", "note", "notes", "slides"];
-      const announcementHints = ["announcement", "announce", "announcements", "notice"];
-
-      const timeframeHints = ["today", "tomorrow", "thisweek", "this week", "this-week", "thisweek"];
-      // Determine basic type
-      const tokenSet = new Set(tokens);
-      if (tokens.some((t) => typeHints.includes(t))) {
-        command = "/assignments";
-      } else if (tokens.some((t) => materialHints.includes(t))) {
-        command = "/materials";
-      } else if (tokens.some((t) => announcementHints.includes(t))) {
-        command = "/announcements";
-      } else {
-        // fallback: assume assignments search
-        command = "/assignments";
-      }
-      // Look for timeframe tokens
-      const tf = tokens.find((t) => ["today", "tomorrow", "this", "week", "thisweek", "this-week", "thisweek"].includes(t));
-      arg = tf || tokens.find((t) => t.length > 2) || null; // naive course or timeframe
-      console.log(`[Messenger] Heuristic inferred command=${command} arg=${arg}`);
-    }
-
-    // Build filters
-    const filters = { type: null, course: null, timeframe: null, raw: normalized };
-
-    // parse command into type
-    if (command === "/assignments") filters.type = "assignment";
-    if (command === "/materials") filters.type = "material";
-    if (command === "/announcements") filters.type = "announcement";
-
-    // parse arg: could be timeframe or course
-    if (arg) {
-      const a = arg.toLowerCase();
-      if (["today", "tomorrow", "thisweek", "this week", "this-week"].includes(a)) {
-        if (a.includes("today")) filters.timeframe = "today";
-        else if (a.includes("tomorrow")) filters.timeframe = "tomorrow";
-        else filters.timeframe = "thisweek";
-      } else if (["lastweek", "last week", "last-week"].includes(a)) {
-        filters.timeframe = "lastweek";
-      } else {
-        // treat as course hint or keyword
-        filters.course = a;
-      }
-    }
-
-    console.log(`[Messenger] Filters after parsing: ${JSON.stringify(filters)}`);
-
-    // Query Redis
-    console.log("[Messenger] Querying Redis for items...");
-    const results = await searchItemsForPsid(psid, filters);
-    console.log(`[Messenger] searchItemsForPsid returned ${results.length} items.`);
-
-    if (!results || results.length === 0) {
-      console.log("[Messenger] No matching items found -> sending apology.");
-      await sendRawMessage(psid, "Sorry, I couldn't find anything matching your search.");
-      return;
-    }
-
-    // Format results. If <=5 results -> single message; otherwise batch.
-    const formatItem = (item) => {
-      const itemTypeLabel = item.type === "assignment" ? "Assignment" : item.type === "material" ? "Material" : "Announcement";
-      const dateLabel =
-        item.type === "assignment"
-          ? `Deadline: ${formatIsoToReadableBDT(item.dueDate)}`
-          : `Posted: ${formatIsoToReadableBDT(item.createdAt)}`;
-      const link = item.link || "Link not available";
-      return `📘 ${item.courseName} ${itemTypeLabel}\n\nTitle: ${item.title}\n${dateLabel}\nLink: ${link}`;
-    };
-
-    // If small set, combine into single message
-    if (results.length <= 5) {
-      const combined = results.map(formatItem).join("\n\n---\n\n");
-      console.log("[Messenger] Sending combined results message (<=5 items).");
-      await sendRawMessage(psid, combined);
-    } else {
-      console.log("[Messenger] Sending results in batches to avoid spam.");
-      // batch size 5
-      for (let i = 0; i < results.length; i += 5) {
-        const batch = results.slice(i, i + 5).map(formatItem).join("\n\n---\n\n");
-        console.log(`[Messenger] Sending batch ${Math.floor(i / 5) + 1}`);
-        await sendRawMessage(psid, batch);
-        await sleep(600); // slight delay
-      }
-    }
-  } catch (err) {
-    console.error("[Messenger] Error in handleIncomingMessage:", err);
-    await sendRawMessage(psid, "Sorry, an error occurred while processing your message.");
+// Course list (numbered) — includes direct course links
+export async function sendCourseList(psid, courses) {
+  console.log("[MATERIALS][sendCourseList] Sending course list to PSID:", psid, "Count:", courses?.length || 0);
+  if (!Array.isArray(courses) || courses.length === 0) {
+    await sendRawMessage(psid, "📚 No active Google Classroom courses found.");
+    return;
   }
+
+  const lines = courses.map((c, idx) => {
+    const code = c.section ? `${c.name} (${c.section})` : c.name;
+    const link = c.alternateLink || "https://classroom.google.com";
+    return `${idx + 1}. ${code}\n   ↗ Open: ${link}`;
+  });
+
+  const msg = `Please choose a course by typing the number:\n\n${lines.join("\n\n")}`;
+  await sendRawMessage(psid, msg);
 }
 
-/* Helper: format ISO -> dd-mm-yyyy, hh:mm AM/PM in BDT (UTC+6) */
-function formatIsoToReadableBDT(iso) {
-  try {
-    if (!iso) return "N/A";
-    const d = new Date(iso);
-    // convert UTC to BDT by adding 6 hours
-    const utc = d.getTime();
-    const bdt = new Date(utc + 6 * 60 * 60 * 1000);
-    const day = String(bdt.getDate()).padStart(2, "0");
-    const month = String(bdt.getMonth() + 1).padStart(2, "0");
-    const year = bdt.getFullYear();
-    let hours = bdt.getHours();
-    const minutes = String(bdt.getMinutes()).padStart(2, "0");
-    const ampm = hours >= 12 ? "PM" : "AM";
-    hours = hours % 12 || 12;
-    return `${day}-${month}-${year}, ${hours}:${minutes} ${ampm}`;
-  } catch (err) {
-    console.error("[Messenger] formatIsoToReadableBDT error:", err);
-    return iso;
+// Materials list for a course — paginated — includes direct links
+export async function sendMaterialsList(psid, course, materials, page = 1, pageSize = 5) {
+  console.log("[MATERIALS][sendMaterialsList] PSID:", psid, {
+    courseId: course?.id,
+    courseName: course?.name,
+    totalMaterials: materials?.length || 0,
+    page,
+    pageSize,
+  });
+
+  const courseLink = course?.alternateLink || "https://classroom.google.com";
+  if (!Array.isArray(materials) || materials.length === 0) {
+    await sendRawMessage(
+      psid,
+      `📘 ${course?.name || "Course"} Materials — none found.\n↗ Open Course: ${courseLink}\n(Type 'back' to return to course list)`
+    );
+    return;
   }
+
+  const totalPages = Math.max(1, Math.ceil(materials.length / pageSize));
+  const currentPage = Math.min(Math.max(1, page), totalPages);
+  const start = (currentPage - 1) * pageSize;
+  const end = start + pageSize;
+  const pageItems = materials.slice(start, end);
+
+  const lines = pageItems.map((m, idx) => {
+    const title = m.title || "Untitled Material";
+    const link = m.alternateLink || courseLink;
+    return `${idx + 1}. ${title}\n   ↗ Open: ${link}`;
+    // Description omitted here to keep list compact. Full detail shown in detail view.
+  });
+
+  let footer = `\nShowing page ${currentPage} of ${totalPages}`;
+  if (currentPage < totalPages) {
+    footer += `\nType 'next' to see more`;
+  }
+  footer += `\n(Type 'back' to return to course list)`;
+
+  const msg = `📘 ${course?.name || "Course"} Materials — Select a material:\n\n${lines.join("\n\n")}\n${footer}\n\n↗ Open Course: ${courseLink}`;
+  await sendRawMessage(psid, msg);
+}
+
+// Material detail — includes description, uploaded date, and direct link
+export async function sendMaterialDetail(psid, course, material) {
+  console.log("[MATERIALS][sendMaterialDetail] PSID:", psid, {
+    courseId: course?.id,
+    materialId: material?.id,
+  });
+
+  const uploaded = material.updateTime ? new Date(material.updateTime) : null;
+  let uploadedStr = "Unknown date";
+  if (uploaded) {
+    // Convert to BDT (UTC+6)
+    uploaded.setHours(uploaded.getHours() + 6);
+    const dd = String(uploaded.getDate()).padStart(2, "0");
+    const mm = String(uploaded.getMonth() + 1).padStart(2, "0");
+    const yyyy = uploaded.getFullYear();
+    uploadedStr = `${dd} ${uploaded.toLocaleString("en-US", { month: "short" })} ${yyyy}`;
+  }
+
+  const title = material.title || "Untitled Material";
+  const desc = material.description || "No description provided.";
+  const link = material.alternateLink || course?.alternateLink || "https://classroom.google.com";
+
+  const msg = `📘 ${course?.name || "Course"} — ${title}\n\nDescription: ${desc}\nUploaded: ${uploadedStr}\n\n🔗 Open in Google Classroom: ${link}\n\n(Type 'back' to return to material list)`;
+  await sendRawMessage(psid, msg);
 }

@@ -1,43 +1,39 @@
 import { google } from "googleapis";
 
-export default function handler(req, res) {
-  console.log("\n--- /api/auth/google: ENTRY ---");
+export default async function handler(req, res) {
+  console.log("[AUTH][GOOGLE] OAuth start request received");
+
   try {
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
       process.env.GOOGLE_REDIRECT_URI
     );
-    const { psid } = req.query;
-    if (!psid) {
-      console.warn("[AuthGoogle] PSID missing in query.");
-      return res.status(400).send("PSID is missing.");
-    }
 
-    // Scopes for both students & teachers (read-only)
     const scopes = [
-      "https://www.googleapis.com/auth/userinfo.profile",
       "https://www.googleapis.com/auth/classroom.courses.readonly",
-      "https://www.googleapis.com/auth/classroom.rosters.readonly",
+      "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
       "https://www.googleapis.com/auth/classroom.announcements.readonly",
       "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly",
-      "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
-      "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
+      "https://www.googleapis.com/auth/classroom.student-submissions.me.readonly",
+      "https://www.googleapis.com/auth/userinfo.profile",
+      "https://www.googleapis.com/auth/userinfo.email",
+      "openid"
     ];
 
-    const authUrl = oauth2Client.generateAuthUrl({
+    console.log("[AUTH][GOOGLE] Generating consent URL with scopes:", scopes);
+
+    const url = oauth2Client.generateAuthUrl({
       access_type: "offline",
-      scope: scopes,
-      state: psid,
       prompt: "consent",
+      scope: scopes
     });
 
-    console.log(`[AuthGoogle] Generated authUrl for PSID ${psid}: ${authUrl}`);
-    res.redirect(authUrl);
+    console.log("[AUTH][GOOGLE] Redirecting user to consent screen:", url);
+
+    res.redirect(url);
   } catch (error) {
-    console.error("❌ Error generating auth URL:", error);
-    res.status(500).send("Error generating auth URL.");
-  } finally {
-    console.log("--- /api/auth/google: EXIT ---\n");
+    console.error("[AUTH][GOOGLE][ERROR] Failed to start OAuth flow:", error);
+    res.status(500).send("Authentication initialization failed");
   }
 }
