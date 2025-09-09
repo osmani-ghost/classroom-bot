@@ -1,5 +1,5 @@
 import fetch from "node-fetch";
-import { getUser } from "./redisHelper.js";
+import { getUser, resetContext } from "./redisHelper.js";
 
 const FB_API_VERSION = "v19.0";
 
@@ -82,9 +82,15 @@ export async function sendMessageToGoogleUser(googleId, text) {
 export async function sendCourseList(psid, courses, userInput = null) {
   console.log("[MATERIALS][sendCourseList] START", { psid, userInput, totalCourses: courses?.length || 0 });
 
-  // ✅ NEW: Handle "done"
+  // Handle "done" early — clear context and end flow
   if (userInput && userInput.trim().toLowerCase() === "done") {
-    console.log("[MATERIALS][sendCourseList] User typed 'done' → ending flow.");
+    console.log("[MATERIALS][sendCourseList] User typed 'done' → ending flow and resetting context.");
+    try {
+      await resetContext(psid);
+      console.log("[MATERIALS][sendCourseList] resetContext success for", psid);
+    } catch (err) {
+      console.warn("[MATERIALS][sendCourseList] resetContext failed:", err);
+    }
     await sendRawMessage(psid, "Okay");
     return;
   }
@@ -101,8 +107,8 @@ export async function sendCourseList(psid, courses, userInput = null) {
     return `${idx + 1}. ${code}\n   ↗ Open: ${link}`;
   });
 
-  const msg = `Please choose a course by typing the number:\n\n${lines.join("\n\n")}`;
-  console.log("[MATERIALS][sendCourseList] Sending message:", msg.slice(0, 200));
+  const msg = `Please choose a course by typing the number:\n\n${lines.join("\n\n")}\n\n(Type 'done' to finish)`;
+  console.log("[MATERIALS][sendCourseList] Sending message:", msg.slice(0, 300));
   await sendRawMessage(psid, msg);
 }
 
@@ -118,9 +124,15 @@ export async function sendMaterialsList(psid, course, materials, page = 1, pageS
     userInput,
   });
 
-  // ✅ NEW: Handle "done"
+  // Handle "done"
   if (userInput && userInput.trim().toLowerCase() === "done") {
-    console.log("[MATERIALS][sendMaterialsList] User typed 'done' → ending flow.");
+    console.log("[MATERIALS][sendMaterialsList] User typed 'done' → ending flow and resetting context.");
+    try {
+      await resetContext(psid);
+      console.log("[MATERIALS][sendMaterialsList] resetContext success for", psid);
+    } catch (err) {
+      console.warn("[MATERIALS][sendMaterialsList] resetContext failed:", err);
+    }
     await sendRawMessage(psid, "Okay");
     return;
   }
@@ -130,7 +142,7 @@ export async function sendMaterialsList(psid, course, materials, page = 1, pageS
     console.log("[MATERIALS][sendMaterialsList] No materials found for course:", course?.id);
     await sendRawMessage(
       psid,
-      `📘 ${course?.name || "Course"} Materials — none found.\n↗ Open Course: ${courseLink}\n(Type 'back' to return to course list)`
+      `📘 ${course?.name || "Course"} Materials — none found.\n↗ Open Course: ${courseLink}\n(Type 'back' to return to course list)\n(Type 'done' to finish)`
     );
     return;
   }
@@ -154,7 +166,7 @@ export async function sendMaterialsList(psid, course, materials, page = 1, pageS
   footer += `\n(Type 'back' to return to course list)\n(Type 'done' to finish)`;
 
   const msg = `📘 ${course?.name || "Course"} Materials — Select a material:\n\n${lines.join("\n\n")}\n${footer}\n\n↗ Open Course: ${courseLink}`;
-  console.log("[MATERIALS][sendMaterialsList] Sending message:", msg.slice(0, 200));
+  console.log("[MATERIALS][sendMaterialsList] Sending message:", msg.slice(0, 300));
   await sendRawMessage(psid, msg);
 }
 
@@ -167,9 +179,15 @@ export async function sendMaterialDetail(psid, course, material, userInput = nul
     userInput,
   });
 
-  // ✅ NEW: Handle "done"
+  // Handle "done"
   if (userInput && userInput.trim().toLowerCase() === "done") {
-    console.log("[MATERIALS][sendMaterialDetail] User typed 'done' → ending flow.");
+    console.log("[MATERIALS][sendMaterialDetail] User typed 'done' → ending flow and resetting context.");
+    try {
+      await resetContext(psid);
+      console.log("[MATERIALS][sendMaterialDetail] resetContext success for", psid);
+    } catch (err) {
+      console.warn("[MATERIALS][sendMaterialDetail] resetContext failed:", err);
+    }
     await sendRawMessage(psid, "Okay");
     return;
   }
@@ -189,6 +207,173 @@ export async function sendMaterialDetail(psid, course, material, userInput = nul
   const link = material.alternateLink || course?.alternateLink || "https://classroom.google.com";
 
   const msg = `📘 ${course?.name || "Course"} — ${title}\n\nDescription: ${desc}\nUploaded: ${uploadedStr}\n\n🔗 Open in Google Classroom: ${link}\n\n(Type 'back' to return to material list)\n(Type 'done' to finish)`;
-  console.log("[MATERIALS][sendMaterialDetail] Sending message:", msg.slice(0, 200));
+  console.log("[MATERIALS][sendMaterialDetail] Sending message:", msg.slice(0, 300));
   await sendRawMessage(psid, msg);
+}
+
+// =========================
+// Announcements list (last 3) — new function
+// =========================
+export async function sendAnnouncementsList(psid, course, announcements = [], userInput = null) {
+  console.log("[ANNOUNCEMENTS][sendAnnouncementsList] START", {
+    psid,
+    courseId: course?.id,
+    courseName: course?.name,
+    totalAnnouncements: announcements?.length || 0,
+    userInput,
+  });
+
+  // Handle "done"
+  if (userInput && userInput.trim().toLowerCase() === "done") {
+    console.log("[ANNOUNCEMENTS] User typed 'done' → ending flow and resetting context.");
+    try {
+      await resetContext(psid);
+      console.log("[ANNOUNCEMENTS] resetContext success for", psid);
+    } catch (err) {
+      console.warn("[ANNOUNCEMENTS] resetContext failed:", err);
+    }
+    await sendRawMessage(psid, "Okay");
+    return;
+  }
+
+  const courseLink = course?.alternateLink || "https://classroom.google.com";
+  if (!Array.isArray(announcements) || announcements.length === 0) {
+    console.log("[ANNOUNCEMENTS] No announcements found for course:", course?.id);
+    await sendRawMessage(
+      psid,
+      `📢 ${course?.name || "Course"} — No recent announcements.\n↗ Open Course: ${courseLink}\n(Type 'back' to return to course list)\n(Type 'done' to finish)`
+    );
+    return;
+  }
+
+  // Show last 3 announcements
+  const top = announcements.slice(0, 3);
+  const lines = top.map((a, idx) => {
+    const textPreview = (a.text || "(No text)").replace(/\n/g, " ");
+    const link = a.alternateLink || courseLink;
+    return `${idx + 1}. ${textPreview}\n   ↗ Open: ${link}`;
+  });
+
+  const msg = `📢 ${course?.name || "Course"} — Recent Announcements:\n\n${lines.join("\n\n")}\n\n↗ Open Course: ${courseLink}\n(Type 'back' to return to course list)\n(Type 'done' to finish)`;
+  console.log("[ANNOUNCEMENTS] Sending message:", msg.slice(0, 400));
+  await sendRawMessage(psid, msg);
+}
+
+// =========================
+// Assignments list (pending only recommended) — paginated — new function
+// assignments array expected to be a list of coursework objects (filter by caller if needed).
+// =========================
+export async function sendAssignmentsList(psid, course, assignments = [], page = 1, pageSize = 5, userInput = null) {
+  console.log("[ASSIGNMENTS][sendAssignmentsList] START", {
+    psid,
+    courseId: course?.id,
+    courseName: course?.name,
+    totalAssignments: assignments?.length || 0,
+    page,
+    pageSize,
+    userInput,
+  });
+
+  // Handle "done"
+  if (userInput && userInput.trim().toLowerCase() === "done") {
+    console.log("[ASSIGNMENTS] User typed 'done' → ending flow and resetting context.");
+    try {
+      await resetContext(psid);
+      console.log("[ASSIGNMENTS] resetContext success for", psid);
+    } catch (err) {
+      console.warn("[ASSIGNMENTS] resetContext failed:", err);
+    }
+    await sendRawMessage(psid, "Okay");
+    return;
+  }
+
+  const courseLink = course?.alternateLink || "https://classroom.google.com";
+  if (!Array.isArray(assignments) || assignments.length === 0) {
+    console.log("[ASSIGNMENTS] No assignments found for course:", course?.id);
+    await sendRawMessage(
+      psid,
+      `📘 ${course?.name || "Course"} — No assignments found.\n↗ Open Course: ${courseLink}\n(Type 'back' to return to course list)\n(Type 'done' to finish)`
+    );
+    return;
+  }
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(assignments.length / pageSize));
+  const currentPage = Math.min(Math.max(1, page), totalPages);
+  const start = (currentPage - 1) * pageSize;
+  const end = start + pageSize;
+  const pageItems = assignments.slice(start, end);
+
+  const lines = pageItems.map((a, idx) => {
+    const title = a.title || "Untitled Assignment";
+    const dueText = a.dueDate ? `${a.dueDate.day}-${String(a.dueDate.month).padStart(2, "0")}-${a.dueDate.year}` : "No due date";
+    const link = a.alternateLink || courseLink;
+    return `${idx + 1}. ${title} (Due: ${dueText})\n   ↗ Open: ${link}`;
+  });
+
+  let footer = `\nShowing page ${currentPage} of ${totalPages}`;
+  if (currentPage < totalPages) footer += `\nType 'next' to see more`;
+  footer += `\n(Type 'back' to return to course list)\n(Type 'done' to finish)`;
+
+  const msg = `📘 ${course?.name || "Course"} — Assignments (pending)\n\n${lines.join("\n\n")}\n${footer}\n\n↗ Open Course: ${courseLink}`;
+  console.log("[ASSIGNMENTS] Sending message:", msg.slice(0, 400));
+  await sendRawMessage(psid, msg);
+}
+
+// Assignment detail view (title, description, due, link)
+export async function sendAssignmentDetail(psid, course, assignment, userInput = null) {
+  console.log("[ASSIGNMENTS][sendAssignmentDetail] START", {
+    psid,
+    courseId: course?.id,
+    assignmentId: assignment?.id,
+    userInput,
+  });
+
+  // Handle "done"
+  if (userInput && userInput.trim().toLowerCase() === "done") {
+    console.log("[ASSIGNMENTS] User typed 'done' → ending flow and resetting context.");
+    try {
+      await resetContext(psid);
+      console.log("[ASSIGNMENTS] resetContext success for", psid);
+    } catch (err) {
+      console.warn("[ASSIGNMENTS] resetContext failed:", err);
+    }
+    await sendRawMessage(psid, "Okay");
+    return;
+  }
+
+  const title = assignment.title || "Untitled Assignment";
+  const desc = assignment.description || "No description provided.";
+  const due = assignment.dueDate ? formatDueDateShort(assignment.dueDate, assignment.dueTime) : "No due date";
+  const link = assignment.alternateLink || course?.alternateLink || "https://classroom.google.com";
+
+  const msg = `📘 ${course?.name || "Course"} — ${title}\n\nDescription: ${desc}\nDue: ${due}\n\n🔗 Open in Google Classroom: ${link}\n\n(Type 'back' to return to assignment list)\n(Type 'done' to finish)`;
+  console.log("[ASSIGNMENTS] Sending message:", msg.slice(0, 400));
+  await sendRawMessage(psid, msg);
+}
+
+// small helper for assignment due formatting (BDT)
+function formatDueDateShort(dueDate, dueTime) {
+  try {
+    const utcDate = new Date(
+      Date.UTC(
+        dueDate.year,
+        dueDate.month - 1,
+        dueDate.day,
+        dueTime?.hours ?? 23,
+        dueTime?.minutes ?? 0
+      )
+    );
+    utcDate.setHours(utcDate.getHours() + 6); // convert to BDT
+    const dd = String(utcDate.getDate()).padStart(2, "0");
+    const mm = String(utcDate.getMonth() + 1).padStart(2, "0");
+    const yyyy = utcDate.getFullYear();
+    let hours = utcDate.getHours();
+    const minutes = String(utcDate.getMinutes()).padStart(2, "0");
+    const ampm = hours >= 12 ? "PM" : "AM";
+    hours = hours % 12 || 12;
+    return `${dd}-${mm}-${yyyy}, ${hours}:${minutes} ${ampm}`;
+  } catch (err) {
+    return "Unknown";
+  }
 }

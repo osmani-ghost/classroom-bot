@@ -182,7 +182,8 @@ async function checkNewAssignmentsPosted(oauth2Client, googleId, courses) {
 }
 
 // =========================
-// Assignment reminders (12h, 6h, 2h only) — skip submitted, ignore overdue, prevent duplicates
+// Assignment reminders (36h, 12h, 6h, 2h) — skip submitted, ignore overdue >24.5h, prevent duplicates
+// Also send a one-time "missing" alert 1 minute after deadline if still not turned in.
 // =========================
 async function checkReminders(oauth2Client, googleId, courses) {
   console.log(`[Cron] Checking assignment reminders for user: ${googleId}`);
@@ -198,7 +199,7 @@ async function checkReminders(oauth2Client, googleId, courses) {
     console.log(`[Cron][Reminders] Course ${course.name} -> Assignments: ${assignments.length}`);
 
     for (const a of assignments) {
-      if (!a.dueDate) continue;
+      if (!a.dueDate) continue; // ignore assignments with no due date for reminders
 
       const due = new Date(
         Date.UTC(
@@ -213,23 +214,32 @@ async function checkReminders(oauth2Client, googleId, courses) {
 
       console.log(`[Cron][Reminders] "${a.title}" due=${due.toISOString()}, diffHours=${diffHours.toFixed(2)}`);
 
-      if (diffHours <= 0 || diffHours > 24.5) {
-        console.log("[Cron][Reminders] ⏭️ Skipping due to time window (past or >24.5h).");
+      // Ignore if far in future or already past long time (>24.5h ago)
+      if (diffHours > 24.5) {
+        console.log("[Cron][Reminders] ⏭️ Skipping because too far in the future (>24.5h).");
         continue;
       }
 
-      const turnedIn = await isTurnedIn(oauth2Client, course.id, a.id, "me");
+      // Check if assignment is already turned in
+      let turnedIn = false;
+      try {
+        turnedIn = await isTurnedIn(oauth2Client, course.id, a.id, "me");
+      } catch (err) {
+        console.error(`[Cron][Reminders] Error checking turned-in for ${a.id}`, err);
+      }
       console.log(`[Cron][Reminders] Submission status=TURNED_IN? ${turnedIn}`);
       if (turnedIn) {
         console.log("[Cron][Reminders] ✅ Skipping because already TURNED_IN.");
         continue;
       }
 
-      const reminders = [12, 6, 2]; // ✅ Only these
+      // Reminder windows
+      const reminders = [36, 12, 6, 2]; // added 36h
       for (const h of reminders) {
         const alreadySent = await reminderAlreadySent(a.id, googleId, `${h}h`);
         console.log(`[Cron][Reminders] Check reminder ${h}h: alreadySent=${alreadySent}`);
 
+        // Use +/- 0.5 hour tolerance for matching window (30 minutes)
         if (Math.abs(diffHours - h) <= 0.5 && !alreadySent) {
           const formattedTime = formatDueDateTime(a.dueDate, a.dueTime);
           const link = a.alternateLink || course.alternateLink || "https://classroom.google.com";
@@ -238,6 +248,23 @@ async function checkReminders(oauth2Client, googleId, courses) {
           await sendMessageToGoogleUser(googleId, message);
           await markReminderSent(a.id, googleId, `${h}h`);
           break;
+        }
+      }
+
+      // ===== Missing / Late notification (send once, 1 minute after deadline) =====
+      // If due has passed and it's been at least 1 minute, send a missing alert (one-time).
+      const overdueMinutes = (now.getTime() - due.getTime()) / (1000 * 60);
+      if (overdueMinutes >= 1 && overdueMinutes < 60 * 24) {
+        // check if missing already sent
+        const alreadyMissing = await reminderAlreadySent(a.id, googleId, "missing");
+        console.log(`[Cron][Reminders] overdueMinutes=${overdueMinutes.toFixed(2)}, alreadyMissing=${alreadyMissing}`);
+        if (!alreadyMissing && !turnedIn) {
+          const formattedTime = formatDueDateTime(a.dueDate, a.dueTime);
+          const link = a.alternateLink || course.alternateLink || "https://classroom.google.com";
+          const message = `⚠️ Assignment Missing / Late\nCourse: ${course.name}\nTitle: ${a.title}\nDeadline was: ${formattedTime}\nLink: ${link}`;
+          console.log(`[Cron][Reminders][MISSING SEND]`, message);
+          await sendMessageToGoogleUser(googleId, message);
+          await markReminderSent(a.id, googleId, "missing");
         }
       }
     }
