@@ -6,7 +6,6 @@ Campus Notify is a personal assistant for Google Classroom that delivers assignm
 
 This project was conceived and designed by Sabbir Hossain Osmani. Development and debugging were powered by AI tools such as GPT-5-mini, Gemini AI, and other models. The final delivery is clean, reliable, and user-friendly.
 
-
 ## Features
 
 --Secure Google OAuth2 login for students
@@ -25,7 +24,6 @@ This project was conceived and designed by Sabbir Hossain Osmani. Development an
 
 --Browsable lists with counts and pagination where needed
 
-
 ## 🛠 Technology Stack
 
 --Node.js (ES Modules)
@@ -39,12 +37,15 @@ This project was conceived and designed by Sabbir Hossain Osmani. Development an
 --AI Assistance: GPT-5-mini, Gemini AI, and other Large Language Models
 
 ## Installation Guide
+
 ```bash
 git clone https://github.com/osmani-ghost/campus-notify.git
 cd campus-notify
 npm install
 ```
+
 ### Create a .env file with:
+
 ```bash
 GOOGLE_CLIENT_ID=<your-google-client-id>
 GOOGLE_CLIENT_SECRET=<your-google-client-secret>
@@ -55,13 +56,14 @@ REDIS_REST_URL=<redis-rest-url>
 REDIS_REST_TOKEN=<redis-rest-token>
 ```
 
-
 ## Running the Bot
+
 --Development Mode: npm run dev
 
 --Production Mode: npm run start
 
 ### Once deployed:
+
 --A user triggers login via Messenger
 
 --Bot fetches classroom data and stores state in Redis
@@ -71,16 +73,15 @@ REDIS_REST_TOKEN=<redis-rest-token>
 --Bot manually or automatically responds (via cron) with reminders or content
 
 ## Command Reference
+
 ```bash
 | Command                                               | Description                                    |
 | ----------------------------------------------------- | ---------------------------------------------- |
-| `/assignments today`                                  | Lists assignments due today                    |
-| `/assignments tomorrow`                               | Lists assignments due tomorrow                 |
-| `/materials`                                          | Lists recent course materials                  |
-| `/announcements`                                      | Lists recent announcements                     |
-| Natural query (e.g., “Math assignments due tomorrow”) | Filters results by keywords, dates, or courses |
-
+| `assignments`                                         | Lists assignments due                          |
+| `materials`                                           | Lists course materials                         |
+| `announcements`                                       | Lists recent announcements                     |
 ```
+
 ## Debugging & Logs
 
 ### Detailed logs are baked in for:
@@ -93,7 +94,6 @@ REDIS_REST_TOKEN=<redis-rest-token>
 
 --Cron job actions (new items, reminders, missing alerts)
 
-
 ## Security & Privacy
 
 --Refresh tokens and credentials are stored securely in Redis
@@ -103,11 +103,13 @@ REDIS_REST_TOKEN=<redis-rest-token>
 --Messages are only sent to authenticated, mapped Messenger PSIDs
 
 ## Acknowledgements
+
 --Project Design & Ideas: osmani-ghost
 
 --Code Support & Debugging: GPT-5-mini (OpenAI), Gemini AI, and other LLMs
 
 --APIs: Google Classroom API, Facebook Messenger AP
+
 ## License
 
 [MIT](https://choosealicense.com/licenses/mit/)
