@@ -244,3 +244,25 @@ export async function sendAssignmentDetail(psid, course, assignment) {
   const msg = `📘 ${course?.name || "Course"} — ${assignment.title}\n\nDescription: ${desc}\nDue: ${dueStr}\n\n🔗 Open in Google Classroom: ${link}\n\n(Type 'back' | 'done')`;
   await sendRawMessage(psid, msg);
 }
+export async function sendInstructionsMessage(psid) {
+  const message = `
+🤖 Bot Instructions
+
+You can type these main commands at any time:
+- announcements → View recent announcements
+- assignments → View pending assignments
+- materials → View course materials
+- instructions → Show this help menu
+
+Inside course menus:
+- Type a number → Select that course or item
+- back → Go to the previous menu
+- done → Exit the flow
+
+⚠️ Invalid input will remind you of valid commands.
+  `;
+
+  console.log("[Messenger] Sending instructions to user:", psid);
+
+  await sendMessengerMessage(psid, { text: message });
+}

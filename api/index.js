@@ -73,7 +73,10 @@ export default async function handler(req, res) {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
-    console.log("[/api/index][GET] Webhook verify:", { mode, hasChallenge: !!challenge });
+    console.log("[/api/index][GET] Webhook verify:", {
+      mode,
+      hasChallenge: !!challenge,
+    });
 
     if (mode === "subscribe" && token === VERIFY_TOKEN) {
       console.log("[/api/index][GET] Webhook verified successfully.");
@@ -88,7 +91,10 @@ export default async function handler(req, res) {
     let body;
     try {
       body = await json(req);
-      console.log("[/api/index][POST] Raw body:", JSON.stringify(body).slice(0, 2000));
+      console.log(
+        "[/api/index][POST] Raw body:",
+        JSON.stringify(body).slice(0, 2000)
+      );
     } catch (err) {
       console.error("[/api/index][POST] Failed to parse body:", err);
       return res.status(400).send("Invalid body");
@@ -101,7 +107,10 @@ export default async function handler(req, res) {
 
     try {
       for (const entry of body.entry || []) {
-        console.log("[/api/index][POST] entry:", JSON.stringify(entry).slice(0, 1000));
+        console.log(
+          "[/api/index][POST] entry:",
+          JSON.stringify(entry).slice(0, 1000)
+        );
         for (const event of entry.messaging || []) {
           const psid = event.sender?.id;
           console.log("[/api/index][POST] Processing event for PSID:", psid);
@@ -118,10 +127,19 @@ export default async function handler(req, res) {
             await processUserMessage(psid, rawText);
           } else if (event.postback) {
             // If you later add postback buttons, handle them here
-            console.log("[/api/index][POST] Received a postback - not used currently:", JSON.stringify(event.postback));
-            await sendRawMessage(psid, "Postbacks are not used. Please type a command: announcements, assignments, materials.");
+            console.log(
+              "[/api/index][POST] Received a postback - not used currently:",
+              JSON.stringify(event.postback)
+            );
+            await sendRawMessage(
+              psid,
+              "Postbacks are not used. Please type a command: announcements, assignments, materials."
+            );
           } else {
-            console.log("[/api/index][POST] Ignoring non-text event for PSID:", psid);
+            console.log(
+              "[/api/index][POST] Ignoring non-text event for PSID:",
+              psid
+            );
           }
         }
       }
@@ -176,7 +194,10 @@ async function processUserMessage(psid, input) {
   const user = await getUser(googleId);
   if (!user || !user.refreshToken) {
     console.log("[processUserMessage] Missing refreshToken — prompting login.");
-    await sendRawMessage(psid, "⚠️ We couldn't find your Google link. Please log in again.");
+    await sendRawMessage(
+      psid,
+      "⚠️ We couldn't find your Google link. Please log in again."
+    );
     await sendLoginButton(psid);
     return;
   }
@@ -185,7 +206,12 @@ async function processUserMessage(psid, input) {
   if (["materials", "assignments", "announcements"].includes(textLower)) {
     console.log("[processUserMessage] Detected top-level command:", textLower);
     // Reset context for new command
-    await setContext(psid, { stage: "courseSelection", flow: textLower, selectedCourse: null, page: 1 });
+    await setContext(psid, {
+      stage: "courseSelection",
+      flow: textLower,
+      selectedCourse: null,
+      page: 1,
+    });
     // Present course list for chosen flow
     const oauth = createOAuth2ClientForRefreshToken(user.refreshToken);
     const courses = await fetchCourses(oauth);
@@ -194,13 +220,22 @@ async function processUserMessage(psid, input) {
   }
 
   // Otherwise, continue according to saved context (if any)
-  const context = (await getContext(psid)) || { stage: null, flow: null, page: 1 };
+  const context = (await getContext(psid)) || {
+    stage: null,
+    flow: null,
+    page: 1,
+  };
   console.log("[processUserMessage] Current context:", context);
 
   // If no active flow, tell user valid commands
   if (!context.flow) {
-    console.log("[processUserMessage] No active flow. Asking user to pick a command.");
-    await sendRawMessage(psid, "⚠️ Please type one of these commands: announcements, assignments, materials.");
+    console.log(
+      "[processUserMessage] No active flow. Asking user to pick a command."
+    );
+    await sendRawMessage(
+      psid,
+      "⚠️ Please type one of these commands: announcements, assignments, materials."
+    );
     return;
   }
 
@@ -223,13 +258,23 @@ async function processUserMessage(psid, input) {
     await sendRawMessage(psid, "⚠️ Unknown flow. Type 'menu' to see commands.");
   } catch (err) {
     console.error("[processUserMessage] Flow handler error:", err);
-    await sendRawMessage(psid, "❌ Something went wrong while processing your request. Try again or type 'menu'.");
+    await sendRawMessage(
+      psid,
+      "❌ Something went wrong while processing your request. Try again or type 'menu'."
+    );
   }
 }
 
 // ---------------- Materials Flow ----------------
 async function materialsFlowHandler(psid, refreshToken, context, text) {
-  console.log("[materialsFlowHandler] PSID:", psid, "Context:", context, "Text:", text);
+  console.log(
+    "[materialsFlowHandler] PSID:",
+    psid,
+    "Context:",
+    context,
+    "Text:",
+    text
+  );
   const oauth = createOAuth2ClientForRefreshToken(refreshToken);
   const courses = await fetchCourses(oauth);
 
@@ -239,15 +284,27 @@ async function materialsFlowHandler(psid, refreshToken, context, text) {
     if (!Number.isNaN(idx) && courses[idx - 1]) {
       const course = courses[idx - 1];
       const materials = await fetchMaterials(oauth, course.id);
-      await setContext(psid, { stage: "materialSelection", flow: "materials", selectedCourse: course.id, page: 1 });
+      await setContext(psid, {
+        stage: "materialSelection",
+        flow: "materials",
+        selectedCourse: course.id,
+        page: 1,
+      });
       await sendMaterialsList(psid, course, materials, 1, PAGE_SIZE);
       return;
     }
 
     // invalid input: show course list (with guidance)
-    await setContext(psid, { stage: "courseSelection", flow: "materials", page: 1 });
+    await setContext(psid, {
+      stage: "courseSelection",
+      flow: "materials",
+      page: 1,
+    });
     await sendCourseList(psid, courses);
-    await sendRawMessage(psid, `Type the number of the course you want. Or type 'done' to finish.`);
+    await sendRawMessage(
+      psid,
+      `Type the number of the course you want. Or type 'done' to finish.`
+    );
     return;
   }
 
@@ -255,8 +312,14 @@ async function materialsFlowHandler(psid, refreshToken, context, text) {
   if (context.stage === "materialSelection") {
     const course = courses.find((c) => c.id === context.selectedCourse);
     if (!course) {
-      console.log("[materialsFlowHandler] Course not found in cached list; resetting to courseSelection.");
-      await setContext(psid, { stage: "courseSelection", flow: "materials", page: 1 });
+      console.log(
+        "[materialsFlowHandler] Course not found in cached list; resetting to courseSelection."
+      );
+      await setContext(psid, {
+        stage: "courseSelection",
+        flow: "materials",
+        page: 1,
+      });
       await sendCourseList(psid, courses);
       return;
     }
@@ -266,8 +329,38 @@ async function materialsFlowHandler(psid, refreshToken, context, text) {
 
     // navigation
     if (text.toLowerCase() === "back") {
-      await setContext(psid, { stage: "courseSelection", flow: "materials", selectedCourse: null, page: 1 });
+      await setContext(psid, {
+        stage: "courseSelection",
+        flow: "materials",
+        selectedCourse: null,
+        page: 1,
+      });
       await sendCourseList(psid, courses);
+      return;
+    }
+    if (textLower === "help" || textLower === "menu") {
+      console.log("[processUserMessage] Showing main menu.");
+      await resetContext(psid);
+      await sendRawMessage(
+        psid,
+        `Hello! Here are the commands you can use:\n\n• announcements → View course announcements\n• assignments → View pending assignments\n• materials → View course materials\n\nType a command to get started.`
+      );
+      return;
+    }
+
+    if (textLower === "instructions") {
+      console.log("[processUserMessage] Showing instructions.");
+      await resetContext(psid);
+      await sendRawMessage(
+        psid,
+        `📖 Instructions:\n
+- Type "materials" → Browse course materials\n
+- Type "assignments" → View pending assignments\n
+- Type "announcements" → See course announcements\n
+- Navigation: "next" / "back"\n
+- Exit: "done"\n
+- Type "menu" or "help" anytime to see main options.`
+      );
       return;
     }
     if (text.toLowerCase() === "done") {
@@ -276,7 +369,10 @@ async function materialsFlowHandler(psid, refreshToken, context, text) {
       return;
     }
     if (text.toLowerCase() === "next") {
-      const totalPages = Math.max(1, Math.ceil((materials?.length || 0) / PAGE_SIZE));
+      const totalPages = Math.max(
+        1,
+        Math.ceil((materials?.length || 0) / PAGE_SIZE)
+      );
       const nextPage = Math.min(page + 1, totalPages);
       await setContext(psid, { ...context, page: nextPage });
       await sendMaterialsList(psid, course, materials, nextPage, PAGE_SIZE);
@@ -289,18 +385,30 @@ async function materialsFlowHandler(psid, refreshToken, context, text) {
       const start = (page - 1) * PAGE_SIZE;
       const material = (materials || [])[start + idx - 1];
       if (material) {
-        await setContext(psid, { stage: "detail", flow: "materials", selectedCourse: course.id, selectedMaterial: material.id, page });
+        await setContext(psid, {
+          stage: "detail",
+          flow: "materials",
+          selectedCourse: course.id,
+          selectedMaterial: material.id,
+          page,
+        });
         await sendMaterialDetail(psid, course, material);
         return;
       } else {
-        await sendRawMessage(psid, "❌ Invalid number on this page. Please try again or type 'next'/'back'/'done'.");
+        await sendRawMessage(
+          psid,
+          "❌ Invalid number on this page. Please try again or type 'next'/'back'/'done'."
+        );
         await sendMaterialsList(psid, course, materials, page, PAGE_SIZE);
         return;
       }
     }
 
     // fallback invalid
-    await sendRawMessage(psid, "⚠️ Please type a number shown, or 'next', 'back', or 'done'.");
+    await sendRawMessage(
+      psid,
+      "⚠️ Please type a number shown, or 'next', 'back', or 'done'."
+    );
     return;
   }
 
@@ -308,11 +416,24 @@ async function materialsFlowHandler(psid, refreshToken, context, text) {
   if (context.stage === "detail") {
     const course = courses.find((c) => c.id === context.selectedCourse);
     const materials = await fetchMaterials(oauth, course.id);
-    const material = (materials || []).find((m) => m.id === context.selectedMaterial);
+    const material = (materials || []).find(
+      (m) => m.id === context.selectedMaterial
+    );
 
     if (text.toLowerCase() === "back") {
-      await setContext(psid, { stage: "materialSelection", flow: "materials", selectedCourse: course.id, page: context.page || 1 });
-      await sendMaterialsList(psid, course, materials, context.page || 1, PAGE_SIZE);
+      await setContext(psid, {
+        stage: "materialSelection",
+        flow: "materials",
+        selectedCourse: course.id,
+        page: context.page || 1,
+      });
+      await sendMaterialsList(
+        psid,
+        course,
+        materials,
+        context.page || 1,
+        PAGE_SIZE
+      );
       return;
     }
     if (text.toLowerCase() === "done") {
@@ -321,17 +442,30 @@ async function materialsFlowHandler(psid, refreshToken, context, text) {
       return;
     }
 
-    await sendRawMessage(psid, "Type 'back' to return to list or 'done' to finish.");
+    await sendRawMessage(
+      psid,
+      "Type 'back' to return to list or 'done' to finish."
+    );
     return;
   }
 
   // default
-  await sendRawMessage(psid, "⚠️ Unknown materials state. Type 'materials' to restart or 'menu' for options.");
+  await sendRawMessage(
+    psid,
+    "⚠️ Unknown materials state. Type 'materials' to restart or 'menu' for options."
+  );
 }
 
 // ---------------- Announcements Flow ----------------
 async function announcementsFlowHandler(psid, refreshToken, context, text) {
-  console.log("[announcementsFlowHandler] PSID:", psid, "Context:", context, "Text:", text);
+  console.log(
+    "[announcementsFlowHandler] PSID:",
+    psid,
+    "Context:",
+    context,
+    "Text:",
+    text
+  );
   const oauth = createOAuth2ClientForRefreshToken(refreshToken);
   const courses = await fetchCourses(oauth);
 
@@ -341,14 +475,32 @@ async function announcementsFlowHandler(psid, refreshToken, context, text) {
     if (!Number.isNaN(idx) && courses[idx - 1]) {
       const course = courses[idx - 1];
       const announcements = await fetchAnnouncements(oauth, course.id);
-      await setContext(psid, { stage: "announcementsList", flow: "announcements", selectedCourse: course.id, page: 1 });
-      await sendAnnouncementsList(psid, course, announcements, 1, ANN_PAGE_SIZE);
+      await setContext(psid, {
+        stage: "announcementsList",
+        flow: "announcements",
+        selectedCourse: course.id,
+        page: 1,
+      });
+      await sendAnnouncementsList(
+        psid,
+        course,
+        announcements,
+        1,
+        ANN_PAGE_SIZE
+      );
       return;
     }
 
-    await setContext(psid, { stage: "courseSelection", flow: "announcements", page: 1 });
+    await setContext(psid, {
+      stage: "courseSelection",
+      flow: "announcements",
+      page: 1,
+    });
     await sendCourseList(psid, courses);
-    await sendRawMessage(psid, "Type the number of the course to view announcements.");
+    await sendRawMessage(
+      psid,
+      "Type the number of the course to view announcements."
+    );
     return;
   }
 
@@ -356,7 +508,11 @@ async function announcementsFlowHandler(psid, refreshToken, context, text) {
   if (context.stage === "announcementsList") {
     const course = courses.find((c) => c.id === context.selectedCourse);
     if (!course) {
-      await setContext(psid, { stage: "courseSelection", flow: "announcements", page: 1 });
+      await setContext(psid, {
+        stage: "courseSelection",
+        flow: "announcements",
+        page: 1,
+      });
       await sendCourseList(psid, courses);
       return;
     }
@@ -365,14 +521,27 @@ async function announcementsFlowHandler(psid, refreshToken, context, text) {
     const page = context.page || 1;
 
     if (text.toLowerCase() === "next") {
-      const totalPages = Math.max(1, Math.ceil((announcements?.length || 0) / ANN_PAGE_SIZE));
+      const totalPages = Math.max(
+        1,
+        Math.ceil((announcements?.length || 0) / ANN_PAGE_SIZE)
+      );
       const nextPage = Math.min(page + 1, totalPages);
       await setContext(psid, { ...context, page: nextPage });
-      await sendAnnouncementsList(psid, course, announcements, nextPage, ANN_PAGE_SIZE);
+      await sendAnnouncementsList(
+        psid,
+        course,
+        announcements,
+        nextPage,
+        ANN_PAGE_SIZE
+      );
       return;
     }
     if (text.toLowerCase() === "back") {
-      await setContext(psid, { stage: "courseSelection", flow: "announcements", page: 1 });
+      await setContext(psid, {
+        stage: "courseSelection",
+        flow: "announcements",
+        page: 1,
+      });
       await sendCourseList(psid, courses);
       return;
     }
@@ -387,17 +556,35 @@ async function announcementsFlowHandler(psid, refreshToken, context, text) {
       const start = (page - 1) * ANN_PAGE_SIZE;
       const ann = (announcements || [])[start + idx - 1];
       if (ann) {
-        await setContext(psid, { stage: "announcementDetail", flow: "announcements", selectedCourse: course.id, selectedAnnouncement: ann.id, page });
+        await setContext(psid, {
+          stage: "announcementDetail",
+          flow: "announcements",
+          selectedCourse: course.id,
+          selectedAnnouncement: ann.id,
+          page,
+        });
         await sendAnnouncementDetail(psid, course, ann);
         return;
       } else {
-        await sendRawMessage(psid, "❌ Invalid number on this page. Try again or type 'next'/'back'/'done'.");
-        await sendAnnouncementsList(psid, course, announcements, page, ANN_PAGE_SIZE);
+        await sendRawMessage(
+          psid,
+          "❌ Invalid number on this page. Try again or type 'next'/'back'/'done'."
+        );
+        await sendAnnouncementsList(
+          psid,
+          course,
+          announcements,
+          page,
+          ANN_PAGE_SIZE
+        );
         return;
       }
     }
 
-    await sendRawMessage(psid, "⚠️ Please type a number from the list, or 'next'/'back'/'done'.");
+    await sendRawMessage(
+      psid,
+      "⚠️ Please type a number from the list, or 'next'/'back'/'done'."
+    );
     return;
   }
 
@@ -405,11 +592,24 @@ async function announcementsFlowHandler(psid, refreshToken, context, text) {
   if (context.stage === "announcementDetail") {
     const course = courses.find((c) => c.id === context.selectedCourse);
     const announcements = await fetchAnnouncements(oauth, course.id);
-    const ann = (announcements || []).find((a) => a.id === context.selectedAnnouncement);
+    const ann = (announcements || []).find(
+      (a) => a.id === context.selectedAnnouncement
+    );
 
     if (text.toLowerCase() === "back") {
-      await setContext(psid, { stage: "announcementsList", flow: "announcements", selectedCourse: course.id, page: context.page || 1 });
-      await sendAnnouncementsList(psid, course, announcements, context.page || 1, ANN_PAGE_SIZE);
+      await setContext(psid, {
+        stage: "announcementsList",
+        flow: "announcements",
+        selectedCourse: course.id,
+        page: context.page || 1,
+      });
+      await sendAnnouncementsList(
+        psid,
+        course,
+        announcements,
+        context.page || 1,
+        ANN_PAGE_SIZE
+      );
       return;
     }
     if (text.toLowerCase() === "done") {
@@ -418,16 +618,29 @@ async function announcementsFlowHandler(psid, refreshToken, context, text) {
       return;
     }
 
-    await sendRawMessage(psid, "Type 'back' to return to announcements or 'done' to finish.");
+    await sendRawMessage(
+      psid,
+      "Type 'back' to return to announcements or 'done' to finish."
+    );
     return;
   }
 
-  await sendRawMessage(psid, "⚠️ Unknown announcements state. Type 'announcements' to restart or 'menu' for options.");
+  await sendRawMessage(
+    psid,
+    "⚠️ Unknown announcements state. Type 'announcements' to restart or 'menu' for options."
+  );
 }
 
 // ---------------- Assignments Flow ----------------
 async function assignmentsFlowHandler(psid, refreshToken, context, text) {
-  console.log("[assignmentsFlowHandler] PSID:", psid, "Context:", context, "Text:", text);
+  console.log(
+    "[assignmentsFlowHandler] PSID:",
+    psid,
+    "Context:",
+    context,
+    "Text:",
+    text
+  );
   const oauth = createOAuth2ClientForRefreshToken(refreshToken);
   const courses = await fetchCourses(oauth);
 
@@ -439,18 +652,33 @@ async function assignmentsFlowHandler(psid, refreshToken, context, text) {
       let assignments = await fetchAssignments(oauth, course.id);
       // augment turnedIn status
       assignments = await Promise.all(
-        (assignments || []).map(async (a) => ({ ...a, turnedIn: await isTurnedIn(oauth, course.id, a.id, "me") }))
+        (assignments || []).map(async (a) => ({
+          ...a,
+          turnedIn: await isTurnedIn(oauth, course.id, a.id, "me"),
+        }))
       );
       // filter pending
       assignments = assignments.filter((a) => !a.turnedIn);
-      await setContext(psid, { stage: "assignmentsList", flow: "assignments", selectedCourse: course.id, page: 1 });
+      await setContext(psid, {
+        stage: "assignmentsList",
+        flow: "assignments",
+        selectedCourse: course.id,
+        page: 1,
+      });
       await sendAssignmentsList(psid, course, assignments, 1, PAGE_SIZE);
       return;
     }
 
-    await setContext(psid, { stage: "courseSelection", flow: "assignments", page: 1 });
+    await setContext(psid, {
+      stage: "courseSelection",
+      flow: "assignments",
+      page: 1,
+    });
     await sendCourseList(psid, courses);
-    await sendRawMessage(psid, "Type the number of the course to view pending assignments.");
+    await sendRawMessage(
+      psid,
+      "Type the number of the course to view pending assignments."
+    );
     return;
   }
 
@@ -458,25 +686,41 @@ async function assignmentsFlowHandler(psid, refreshToken, context, text) {
   if (context.stage === "assignmentsList") {
     const course = courses.find((c) => c.id === context.selectedCourse);
     if (!course) {
-      await setContext(psid, { stage: "courseSelection", flow: "assignments", page: 1 });
+      await setContext(psid, {
+        stage: "courseSelection",
+        flow: "assignments",
+        page: 1,
+      });
       await sendCourseList(psid, courses);
       return;
     }
 
     let assignments = await fetchAssignments(oauth, course.id);
-    assignments = await Promise.all((assignments || []).map(async (a) => ({ ...a, turnedIn: await isTurnedIn(oauth, course.id, a.id, "me") })));
+    assignments = await Promise.all(
+      (assignments || []).map(async (a) => ({
+        ...a,
+        turnedIn: await isTurnedIn(oauth, course.id, a.id, "me"),
+      }))
+    );
     assignments = assignments.filter((a) => !a.turnedIn);
     const page = context.page || 1;
 
     if (text.toLowerCase() === "next") {
-      const totalPages = Math.max(1, Math.ceil((assignments?.length || 0) / PAGE_SIZE));
+      const totalPages = Math.max(
+        1,
+        Math.ceil((assignments?.length || 0) / PAGE_SIZE)
+      );
       const nextPage = Math.min(page + 1, totalPages);
       await setContext(psid, { ...context, page: nextPage });
       await sendAssignmentsList(psid, course, assignments, nextPage, PAGE_SIZE);
       return;
     }
     if (text.toLowerCase() === "back") {
-      await setContext(psid, { stage: "courseSelection", flow: "assignments", page: 1 });
+      await setContext(psid, {
+        stage: "courseSelection",
+        flow: "assignments",
+        page: 1,
+      });
       await sendCourseList(psid, courses);
       return;
     }
@@ -491,17 +735,29 @@ async function assignmentsFlowHandler(psid, refreshToken, context, text) {
       const start = (page - 1) * PAGE_SIZE;
       const assignment = (assignments || [])[start + idx - 1];
       if (assignment) {
-        await setContext(psid, { stage: "assignmentDetail", flow: "assignments", selectedCourse: course.id, selectedAssignment: assignment.id, page });
+        await setContext(psid, {
+          stage: "assignmentDetail",
+          flow: "assignments",
+          selectedCourse: course.id,
+          selectedAssignment: assignment.id,
+          page,
+        });
         await sendAssignmentDetail(psid, course, assignment);
         return;
       } else {
-        await sendRawMessage(psid, "❌ Invalid number on this page. Try again or type 'next'/'back'/'done'.");
+        await sendRawMessage(
+          psid,
+          "❌ Invalid number on this page. Try again or type 'next'/'back'/'done'."
+        );
         await sendAssignmentsList(psid, course, assignments, page, PAGE_SIZE);
         return;
       }
     }
 
-    await sendRawMessage(psid, "⚠️ Please type a number shown, or 'next', 'back', or 'done'.");
+    await sendRawMessage(
+      psid,
+      "⚠️ Please type a number shown, or 'next', 'back', or 'done'."
+    );
     return;
   }
 
@@ -509,13 +765,31 @@ async function assignmentsFlowHandler(psid, refreshToken, context, text) {
   if (context.stage === "assignmentDetail") {
     const course = courses.find((c) => c.id === context.selectedCourse);
     let assignments = await fetchAssignments(oauth, course.id);
-    assignments = await Promise.all((assignments || []).map(async (a) => ({ ...a, turnedIn: await isTurnedIn(oauth, course.id, a.id, "me") })));
+    assignments = await Promise.all(
+      (assignments || []).map(async (a) => ({
+        ...a,
+        turnedIn: await isTurnedIn(oauth, course.id, a.id, "me"),
+      }))
+    );
     assignments = assignments.filter((a) => !a.turnedIn);
-    const assignment = (assignments || []).find((a) => a.id === context.selectedAssignment);
+    const assignment = (assignments || []).find(
+      (a) => a.id === context.selectedAssignment
+    );
 
     if (text.toLowerCase() === "back") {
-      await setContext(psid, { stage: "assignmentsList", flow: "assignments", selectedCourse: course.id, page: context.page });
-      await sendAssignmentsList(psid, course, assignments, context.page, PAGE_SIZE);
+      await setContext(psid, {
+        stage: "assignmentsList",
+        flow: "assignments",
+        selectedCourse: course.id,
+        page: context.page,
+      });
+      await sendAssignmentsList(
+        psid,
+        course,
+        assignments,
+        context.page,
+        PAGE_SIZE
+      );
       return;
     }
     if (text.toLowerCase() === "done") {
@@ -524,9 +798,15 @@ async function assignmentsFlowHandler(psid, refreshToken, context, text) {
       return;
     }
 
-    await sendRawMessage(psid, "Type 'back' to return to list, or 'done' to finish.");
+    await sendRawMessage(
+      psid,
+      "Type 'back' to return to list, or 'done' to finish."
+    );
     return;
   }
 
-  await sendRawMessage(psid, "⚠️ Unknown assignment state. Type 'assignments' to restart or 'menu' for options.");
+  await sendRawMessage(
+    psid,
+    "⚠️ Unknown assignment state. Type 'assignments' to restart or 'menu' for options."
+  );
 }
