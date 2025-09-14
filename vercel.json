@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/login/google",
+      "destination": "/api/auth/google"
+    }
+  ]
+}

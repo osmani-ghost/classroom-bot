@@ -35,12 +35,11 @@ export default async function handler(req, res) {
       "openid",
     ];
 
-    console.log("[AUTH][GOOGLE] Scopes:", scopes);
     const authUrl = oauth2Client.generateAuthUrl({
       access_type: "offline",
-      prompt: "consent",
+      prompt: "consent", // ensures refresh token
       scope: scopes,
-      state: psid, // carry PSID into callback
+      state: psid,       // carry PSID into callback
     });
 
     console.log("[AUTH][GOOGLE] Redirecting to Google consent screen for PSID:", psid);
